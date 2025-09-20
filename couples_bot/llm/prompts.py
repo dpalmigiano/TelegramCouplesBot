@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import List
 
-
 SYSTEM_PROMPT = (
     "You are a pragmatic couples coach. Offer short, concrete support in plain"
     " English. Avoid therapy jargon and never diagnose."

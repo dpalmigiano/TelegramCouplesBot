@@ -5,7 +5,6 @@ import types
 from datetime import datetime, timezone
 
 import pytest
-
 from couples_bot import db
 from couples_bot.config import get_settings
 from couples_bot.db_jobs import claim_job, enqueue_job, hash_payload, reset_chaos_state

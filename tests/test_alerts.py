@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 import pytest
-
 from couples_bot import db
 from couples_bot.alerts import pings
+from couples_bot.bot import commands
 from couples_bot.config import get_settings
 from couples_bot.models import AlertKind
 
@@ -294,3 +294,17 @@ async def test_boundary_and_follow_through_copy(monkeypatch, tmp_path):
     )
     assert sent_follow
     assert dm_snippet not in client.sent[-1][1]
+
+
+@pytest.mark.asyncio
+async def test_forget_purges_partner_data(monkeypatch, tmp_path):
+    couple_id = _setup_env(monkeypatch, tmp_path)
+    db.upsert_stat(couple_id, "p_to_n_conflict_ratio", 1.5)
+    db.upsert_advice(couple_id, 1, "Keep going")
+
+    message = await commands.forget(couple_id, 1)
+    assert "marked for deletion" in message
+    assert db.fetch_advice(couple_id, 1) is None
+    stats = db.get_stats(couple_id)
+    assert "p_to_n_conflict_ratio" not in stats
+    assert not commands.has_consent(couple_id, 1)

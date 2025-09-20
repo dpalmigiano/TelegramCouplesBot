@@ -5,9 +5,8 @@ from __future__ import annotations
 from typing import Dict, List, Tuple
 
 from .. import db
-from ..llm import provider, prompts
+from ..llm import prompts, provider
 from ..metrics import compute
-
 
 SIGNAL_TEMPLATES: Dict[str, Dict[str, str]] = {
     "neg_affect": {

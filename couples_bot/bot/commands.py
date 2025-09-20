@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
 from typing import Dict, List, Optional
 
 from .. import db
 from ..advice import advice_engine
-from ..llm import provider, prompts
+from ..llm import prompts, provider
 from ..metrics import compute, thresholds
-from ..models import AlertKind
-from ..utils import timebox
 
 CONSENT_PREFIX = "consent:"
 PAUSE_KEY = "tracking_paused"
@@ -208,8 +205,7 @@ async def status(couple_id: int) -> str:
         lines.append("Active logistics: " + ", ".join(logistics_alerts))
 
     lines.append(_status_tip(flat, sla_seconds))
-    return "
-".join(lines)
+    return "\n".join(lines)
 
 
 async def advice(couple_id: int, user_id: int, label: Optional[str] = None) -> str:
@@ -291,6 +287,7 @@ async def set_dnd(couple_id: int, user_id: int, window: str) -> str:
 
 
 async def forget(couple_id: int, user_id: int) -> str:
+    db.purge_user_data(couple_id, user_id)
     set_consent(couple_id, user_id, False)
     db.set_pref(couple_id, user_id, enable_alerts=False)
     return "Your data has been marked for deletion."

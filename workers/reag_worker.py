@@ -21,9 +21,9 @@ from couples_bot.db_jobs import (
     fail_job,
     pending_jobs_count,
 )
+from couples_bot.metrics.compute import flatten_metrics
 from couples_bot.store import graph
 from couples_bot.utils import timebox
-from couples_bot.metrics.compute import flatten_metrics
 
 SCHEMA_PROMPT = (
     "You are a reasoning worker for a couples-coaching bot. Respond with STRICT JSON "
@@ -203,10 +203,15 @@ def process_job(job_row, client: Groq) -> None:
     messages = _build_messages(docs)
     settings = get_settings()
     logger.info(
-        "Processing job %s for couple %s with model=%s queue=%s", job_id, couple_id, model, queue_len
+        "Processing job %s for couple %s with model=%s queue=%s",
+        job_id,
+        couple_id,
+        model,
+        queue_len,
     )
     start_ts = min(int(doc.get("ts_int", int(timebox.utc_now().timestamp()))) for doc in docs)
     end_ts = max(int(doc.get("ts_int", start_ts)) for doc in docs)
+    started_monotonic = time.monotonic()
 
     if settings.chaos_mode and random.random() < settings.chaos_llm_p:
         raise RuntimeError("CHAOS: simulated LLM failure")
@@ -263,6 +268,16 @@ def process_job(job_row, client: Groq) -> None:
         model=model,
         window_start_ts=start_ts,
         window_end_ts=end_ts,
+    )
+    duration = time.monotonic() - started_monotonic
+    logger.info(
+        "Job %s done model=%s queue=%s tok_in=%s tok_out=%s duration=%.2fs",
+        job_id,
+        model,
+        queue_len,
+        token_in,
+        token_out,
+        duration,
     )
 
 

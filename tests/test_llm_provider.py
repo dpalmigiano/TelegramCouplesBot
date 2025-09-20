@@ -2,7 +2,6 @@ import itertools
 import types
 
 import pytest
-
 from couples_bot.config import get_settings
 from couples_bot.llm import provider
 

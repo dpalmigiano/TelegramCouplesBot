@@ -1,9 +1,7 @@
 import json
-import json
 from pathlib import Path
 
 import pytest
-
 from couples_bot.metrics import compute
 
 

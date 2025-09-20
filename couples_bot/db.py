@@ -325,6 +325,30 @@ def fetch_pref(couple_id: int, user_id: int) -> Optional[sqlite3.Row]:
         ).fetchone()
 
 
+def purge_user_data(couple_id: int, user_id: int) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM messages WHERE couple_id = ? AND sender_id = ?",
+            (couple_id, user_id),
+        )
+        conn.execute(
+            "DELETE FROM advice WHERE couple_id = ? AND for_user_id = ?",
+            (couple_id, user_id),
+        )
+        conn.execute(
+            "DELETE FROM cooldowns WHERE couple_id = ? AND user_id = ?",
+            (couple_id, user_id),
+        )
+        conn.execute(
+            "DELETE FROM prefs WHERE couple_id = ? AND user_id = ?",
+            (couple_id, user_id),
+        )
+        conn.execute(
+            "DELETE FROM stats WHERE couple_id = ?",
+            (couple_id,),
+        )
+
+
 def wipe_couple(couple_id: int) -> None:
     with get_conn() as conn:
         conn.execute("DELETE FROM messages WHERE couple_id = ?", (couple_id,))
@@ -359,6 +383,7 @@ __all__ = [
     "record_cooldown",
     "fetch_cooldown",
     "set_pref",
+    "purge_user_data",
     "fetch_pref",
     "wipe_couple",
 ]

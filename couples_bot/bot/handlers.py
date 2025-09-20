@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import math
 from datetime import datetime, timezone
 from typing import Optional
@@ -12,11 +11,11 @@ from telethon import events
 from .. import db
 from ..advice import advice_engine
 from ..alerts import pings
-from ..metrics import compute, classifiers, thresholds
+from ..metrics import classifiers, compute, thresholds
 from ..models import AlertKind
-from ..utils import timebox
 from ..onboarding import OnboardingWizard
 from ..onboarding import copy as onboarding_copy
+from ..utils import timebox
 from . import commands
 
 

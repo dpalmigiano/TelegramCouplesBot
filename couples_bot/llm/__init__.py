@@ -1,5 +1,5 @@
 """LLM helpers."""
 
-from .provider import llm_complete, LLMDisabled
+from .provider import LLMDisabled, llm_complete
 
 __all__ = ["llm_complete", "LLMDisabled"]

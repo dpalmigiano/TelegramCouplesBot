@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-import asyncio
 import contextlib
 import logging
+
+from workers import scheduler
 
 from .bot import handlers, telethon_client
 from .config import get_settings
 from .db import run_migrations
-from workers import scheduler
 
 
 async def _scheduler_loop() -> None:

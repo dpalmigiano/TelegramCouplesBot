@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
 from statistics import median
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence
-
-import sqlite3
 
 from ..utils import text as text_utils
 from . import classifiers

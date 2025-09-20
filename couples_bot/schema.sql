@@ -72,7 +72,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     created_ts INT NOT NULL,
     started_ts INT,
     finished_ts INT,
-    status TEXT NOT NULL DEFAULT 'pending',
+    status TEXT NOT NULL
+        CHECK(status IN ('PENDING','RUNNING','DONE','FAILED'))
+        DEFAULT 'PENDING',
     error TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_hash ON jobs(couple_id, payload_hash);

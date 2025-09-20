@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import datetime
 from typing import Iterable, List, Tuple
 
 from couples_bot import db
 from couples_bot.config import get_settings
-from couples_bot.db_jobs import enqueue_job, job_exists, last_run_for_couple, pending_context_slice
+from couples_bot.db_jobs import (
+    enqueue_job,
+    has_active_job,
+    hash_payload,
+    job_exists,
+    last_run_for_couple,
+    pending_context_slice,
+)
 from couples_bot.utils import timebox
 
 
@@ -44,6 +50,8 @@ def collect_batches(now: datetime | None = None) -> List[Tuple[int, List[dict], 
         if last_completed is not None:
             if int(now.timestamp()) - last_completed < settings.reag_min_interval_secs:
                 continue
+        if has_active_job(couple_id):
+            continue
         docs = pending_context_slice(couple_id)
         if not docs:
             continue
@@ -65,7 +73,7 @@ def enqueue_if_calm(now: datetime | None = None) -> int:
             "created_ts": int(now.timestamp()),
         }
         payload_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-        payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        payload_hash = hash_payload(payload)
         if job_exists(couple_id, payload_hash):
             continue
         job_id = enqueue_job(couple_id, payload_json, payload_hash)
@@ -74,4 +82,10 @@ def enqueue_if_calm(now: datetime | None = None) -> int:
     return enqueued
 
 
-__all__ = ["should_run", "collect_batches", "enqueue_if_calm"]
+def tick(now: datetime | None = None) -> int:
+    """Convenience alias for enqueue_if_calm to match app expectations."""
+
+    return enqueue_if_calm(now)
+
+
+__all__ = ["should_run", "collect_batches", "enqueue_if_calm", "tick"]

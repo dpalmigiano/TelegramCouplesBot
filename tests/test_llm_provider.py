@@ -1,3 +1,4 @@
+import itertools
 import types
 
 import pytest
@@ -20,6 +21,15 @@ def _base_env(monkeypatch):
     monkeypatch.setenv("REAG_MAX_OUT_TOKENS", "4096")
     monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fallback-model")
     monkeypatch.setenv("GRAPH_ENABLED", "false")
+    monkeypatch.setenv("CHAOS_MODE", "0")
+    monkeypatch.setenv("CHAOS_LLM_P", "0.2")
+    monkeypatch.setenv("ONBOARDING_DEEP_LINKS", "1")
+    monkeypatch.setenv("ONBOARDING_BRAND_NAME", "Couples Coach")
+    monkeypatch.setenv("ONBOARDING_EMOJI_STYLE", "🎯💬❤️")
+    monkeypatch.setenv(
+        "ONBOARDING_TZ_SUGGESTIONS",
+        "[\"America/Los_Angeles\",\"America/New_York\"]",
+    )
 
 
 def test_openai_primary(monkeypatch):
@@ -154,6 +164,41 @@ def test_streaming(monkeypatch):
         stream=True,
     )
     assert "".join(iterator) == "hello"
+
+
+def test_chaos_retry(monkeypatch):
+    _base_env(monkeypatch)
+    monkeypatch.setenv("ENABLE_LLM", "1")
+    monkeypatch.setenv("OPENAI_API_KEY", "key")
+    monkeypatch.setenv("GROQ_API_KEY", "")
+    monkeypatch.setenv("CHAOS_MODE", "1")
+    get_settings.cache_clear()
+
+    calls = {"attempts": 0}
+
+    class DummyOpenAI:
+        def __init__(self, api_key, timeout=None):
+            self.chat = types.SimpleNamespace(
+                completions=types.SimpleNamespace(create=self._create)
+            )
+
+        def _create(self, **kwargs):
+            calls["attempts"] += 1
+            return types.SimpleNamespace(
+                choices=[types.SimpleNamespace(message={"content": "ok"})]
+            )
+
+    # First random() call triggers chaos, second allows success
+    sequence = itertools.chain([0.0], itertools.repeat(1.0))
+
+    monkeypatch.setattr(provider, "OpenAI", DummyOpenAI)
+    monkeypatch.setattr(provider, "Groq", None)
+    monkeypatch.setattr(provider.random, "random", lambda: next(sequence))
+
+    result = provider.llm_complete([{"role": "user", "content": "hi"}])
+    assert result == "ok"
+    # Chaos injection prevented the first attempt from reaching the client
+    assert calls["attempts"] == 1
 
 
 def test_disabled(monkeypatch):

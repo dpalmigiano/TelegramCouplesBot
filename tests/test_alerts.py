@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta
 
 import pytest
@@ -36,6 +35,12 @@ def _setup_env(monkeypatch, tmp_path):
     monkeypatch.setenv("ENABLE_LLM", "0")
     monkeypatch.setenv("OPENAI_API_KEY", "")
     monkeypatch.setenv("GROQ_API_KEY", "")
+    monkeypatch.setenv("CHAOS_MODE", "0")
+    monkeypatch.setenv("CHAOS_LLM_P", "0.2")
+    monkeypatch.setenv("ONBOARDING_DEEP_LINKS", "1")
+    monkeypatch.setenv("ONBOARDING_BRAND_NAME", "Couples Coach")
+    monkeypatch.setenv("ONBOARDING_EMOJI_STYLE", "🎯💬❤️")
+    monkeypatch.setenv("ONBOARDING_TZ_SUGGESTIONS", "[\"UTC\"]")
     get_settings.cache_clear()
     if hasattr(db, "_CONN"):
         db._CONN = None  # type: ignore[attr-defined]
@@ -245,3 +250,47 @@ async def test_daily_caps_for_new_triggers(monkeypatch, tmp_path):
         now=log_base + timedelta(hours=2),
     )
     assert not blocked_log
+
+
+@pytest.mark.asyncio
+async def test_boundary_and_follow_through_copy(monkeypatch, tmp_path):
+    couple_id = _setup_env(monkeypatch, tmp_path)
+    client = DummyClient()
+    now = datetime(2024, 2, 1, 10, 0, 0)
+
+    dm_snippet = "stop texting me at work"
+    boundary_text = pings.format_ping(
+        AlertKind.RISK,
+        "boundary_violations_per_1k",
+        2.0,
+    )
+    sent = await pings.maybe_ping(
+        client,
+        couple_id=couple_id,
+        user_id=1,
+        metric_key="boundary_violations_per_1k",
+        kind=AlertKind.RISK,
+        text=boundary_text,
+        tz_name="UTC",
+        now=now,
+    )
+    assert sent
+    assert dm_snippet not in client.sent[-1][1]
+
+    follow_text = pings.format_ping(
+        AlertKind.PRAISE,
+        "follow_through_latency_hours",
+        0.3,
+    )
+    sent_follow = await pings.maybe_ping(
+        client,
+        couple_id=couple_id,
+        user_id=1,
+        metric_key="follow_through_latency_hours",
+        kind=AlertKind.PRAISE,
+        text=follow_text,
+        tz_name="UTC",
+        now=now + timedelta(minutes=30),
+    )
+    assert sent_follow
+    assert dm_snippet not in client.sent[-1][1]

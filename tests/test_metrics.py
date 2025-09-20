@@ -1,4 +1,5 @@
 import json
+import json
 from pathlib import Path
 
 import pytest
@@ -42,3 +43,16 @@ def test_full_metrics():
     assert metrics["support_balance_index"]["B"] == pytest.approx(2.0)
     assert pytest.approx(metrics["boundary_violations_per_1k"], rel=1e-3) == 105.2631
     assert pytest.approx(metrics["contempt_markers_per_1k"], rel=1e-3) == 52.6315
+
+
+def test_monotonicity_signals():
+    base_rows = load_rows()
+    baseline = compute.compute_metrics(base_rows)
+    extra_positive = dict(base_rows[-1])
+    extra_positive["id"] = 999
+    extra_positive["ts"] = "2024-01-01T12:00:00"
+    extra_positive["text"] = "Thanks for owning it, I appreciate the reset."
+    boosted = compute.compute_metrics(base_rows + [extra_positive])
+
+    assert boosted["p_to_n_conflict_ratio"] >= baseline["p_to_n_conflict_ratio"]
+    assert boosted["repair_attempts_per_hour"] >= baseline["repair_attempts_per_hour"]

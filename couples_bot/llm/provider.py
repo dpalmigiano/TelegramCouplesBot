@@ -40,6 +40,14 @@ def _streaming_iterator(chunks: Iterable) -> Iterator[str]:
             yield choice.message.get("content", "")
 
 
+def _maybe_inject_failure(provider_name: str) -> None:
+    settings = get_settings()
+    if not settings.chaos_mode:
+        return
+    if random.random() < settings.chaos_llm_p:
+        raise TimeoutError(f"CHAOS: simulated {provider_name} failure")
+
+
 def _with_retries(func):
     delay = 1.0
     last_error: Exception | None = None
@@ -65,6 +73,7 @@ def _openai_complete(messages, *, max_tokens, temperature, stream):
     client = OpenAI(api_key=settings.openai_api_key, timeout=REQUEST_TIMEOUT)
 
     def _invoke():
+        _maybe_inject_failure("openai")
         return client.chat.completions.create(
             model=settings.openai_model,
             messages=messages,
@@ -100,6 +109,7 @@ def _groq_complete(
         extra["compound_custom"] = {"tools": {"enabled_tools": list(enabled_tools)}}
 
     def _invoke():
+        _maybe_inject_failure("groq")
         return client.chat.completions.create(
             model=model,
             messages=messages,

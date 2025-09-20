@@ -80,6 +80,14 @@ def link_couple(
     return int(couple_id)
 
 
+def update_couple_tz(couple_id: int, tz: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE couples SET tz = ? WHERE id = ?",
+            (tz, couple_id),
+        )
+
+
 def fetch_couple_by_group(group_chat_id: int) -> Optional[sqlite3.Row]:
     with get_conn() as conn:
         row = conn.execute(
@@ -338,6 +346,7 @@ __all__ = [
     "fetch_couple_by_group",
     "fetch_couple_by_user",
     "fetch_couple",
+    "update_couple_tz",
     "fetch_last_message_ts",
     "fetch_messages_since",
     "upsert_advice",

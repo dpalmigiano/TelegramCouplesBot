@@ -15,11 +15,27 @@ from ..alerts import pings
 from ..metrics import compute, classifiers, thresholds
 from ..models import AlertKind
 from ..utils import timebox
+from ..onboarding import OnboardingWizard
+from ..onboarding import copy as onboarding_copy
 from . import commands
 
 
 def register(client) -> None:
     """Register command and message handlers on the client."""
+
+    wizard = OnboardingWizard(client)
+
+    @client.on(events.NewMessage(pattern=r"^/start(?:\s+(.*))?$"))
+    async def _start(event):
+        if not event.is_private:
+            await event.respond("DM me with the deep link to complete onboarding.")
+            return
+        payload = event.raw_text.split(" ", 1)[1] if " " in event.raw_text else ""
+        await wizard.handle_start(event, payload)
+
+    @client.on(events.NewMessage(pattern=r"^/hello"))
+    async def _hello(event):
+        await event.respond(onboarding_copy.hello_card())
 
     @client.on(events.NewMessage(pattern=r"^/link"))
     async def _link(event):
@@ -158,9 +174,17 @@ def register(client) -> None:
             return
         await event.respond(await commands.wipe(int(parts[1])))
 
+    @client.on(events.CallbackQuery())
+    async def _callbacks(event):
+        handled = await wizard.handle_callback(event)
+        if handled:
+            return
+
     @client.on(events.NewMessage())
     async def _pipeline(event):
         if event.raw_text.startswith("/"):
+            return
+        if event.is_private and await wizard.handle_manual_input(event):
             return
         couple = _resolve_couple(event)
         if not couple:

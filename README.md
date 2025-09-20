@@ -34,6 +34,21 @@ migrations, registers handlers, ticks the REAG scheduler, and prints a mini
 guide. The worker (`python -m workers.reag_worker`) drains the reasoning queue
 and applies model outputs to advice, metrics, and optional graph storage.
 
+## Onboarding
+
+The bot now ships a tap-first onboarding wizard. Share a deep link such as:
+
+```
+https://t.me/your_bot_username?start=link_<groupId>_<userA>_<userB>
+```
+
+Partners can tap the link to jump into the flow: the bot confirms the group,
+walks both partners through consent, timezone selection, DND/SLA presets, and
+finishes with a success card. If Telegram privacy mode is still enabled, the
+wizard surfaces a step-by-step guide (BotFather → `/setprivacy` → turn **off**)
+so the bot can read group messages. The classic `/link @A @B` command remains
+available for manual setups, and `/hello` offers a quick welcome recap.
+
 ## Environment variables
 
 | Key | Description |
@@ -53,6 +68,12 @@ and applies model outputs to advice, metrics, and optional graph storage.
 | `REAG_QUEUE_HIGH_WATERMARK` | Pending job count that triggers backpressure routing (default `12`). |
 | `REAG_MAX_OUT_TOKENS` | Max completion tokens for REAG runs (default `4096`). |
 | `GRAPH_ENABLED` | `true` to enable graph/vector adapters; `false` (default) is a no-op. |
+| `CHAOS_MODE` | `1` to enable failure injection (tests/chaos engineering); default `0`. |
+| `CHAOS_LLM_P` | Probability for LLM chaos failures when `CHAOS_MODE=1` (default `0.2`). |
+| `ONBOARDING_DEEP_LINKS` | `1` to enable deep-link wizard (default on). |
+| `ONBOARDING_BRAND_NAME` | Display name used in onboarding cards (default `Couples Coach`). |
+| `ONBOARDING_EMOJI_STYLE` | Emoji string for progress bars (default `🎯💬❤️`). |
+| `ONBOARDING_TZ_SUGGESTIONS` | Comma-separated timezone presets for onboarding. |
 
 ## Linking a couple
 

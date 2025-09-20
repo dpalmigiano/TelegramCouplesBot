@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import asyncio
 import contextlib
 import logging
 
@@ -15,7 +16,7 @@ async def _scheduler_loop() -> None:
     interval = max(settings.reag_silence_secs // 3, 30)
     while True:
         try:
-            enqueued = scheduler.enqueue_if_calm()
+            enqueued = scheduler.tick()
             if enqueued:
                 logging.info("Enqueued %s REAG jobs", enqueued)
         except Exception:  # pragma: no cover - defensive
@@ -29,6 +30,13 @@ async def main() -> None:
     run_migrations()
     client = telethon_client.create_client()
     handlers.register(client)
+
+    logging.info(
+        "REAG lane ready (silence=%ss, min_interval=%ss, high_watermark=%s)",
+        settings.reag_silence_secs,
+        settings.reag_min_interval_secs,
+        settings.reag_queue_high_watermark,
+    )
 
     print("Couples bot online. Key commands: /link, /consent, /status, /advice.")
     print("Ensure both partners DM /consent yes to start tracking.")

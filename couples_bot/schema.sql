@@ -63,3 +63,29 @@ CREATE TABLE IF NOT EXISTS prefs (
     sla_minutes INTEGER DEFAULT 120,
     PRIMARY KEY (couple_id, user_id)
 );
+
+CREATE TABLE IF NOT EXISTS jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    couple_id INTEGER NOT NULL REFERENCES couples(id) ON DELETE CASCADE,
+    payload_json TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    created_ts INT NOT NULL,
+    started_ts INT,
+    finished_ts INT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    error TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_hash ON jobs(couple_id, payload_hash);
+CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs(status, created_ts);
+
+CREATE TABLE IF NOT EXISTS reag_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    couple_id INTEGER NOT NULL REFERENCES couples(id) ON DELETE CASCADE,
+    window_start_ts INT NOT NULL,
+    window_end_ts INT NOT NULL,
+    token_in INT,
+    token_out INT,
+    model TEXT NOT NULL,
+    created_ts INT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reag_runs_couple ON reag_runs(couple_id, created_ts DESC);

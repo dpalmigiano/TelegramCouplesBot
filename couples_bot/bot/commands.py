@@ -47,31 +47,33 @@ async def link(group_chat_id: int, user_a_id: int, user_b_id: int, tz: str) -> s
     )
 
 
-def _format_metric_lines(metrics: Dict[str, float | str]) -> List[str]:
+def _format_metric_lines(flat: Dict[str, object]) -> List[str]:
     order = [
         ("p_to_n_conflict_ratio", "Pos/neg conflict ratio"),
         ("harsh_start_rate", "Harsh start rate"),
         ("repair_attempts_per_hour", "Repair attempts/hr"),
         ("repair_effectiveness_pct", "Repair effectiveness %"),
         ("neg_affect_reciprocity", "Neg affect reciprocity"),
-        ("demand_withdraw_rate_AtoB", "Demand→withdraw A→B/1k"),
-        ("demand_withdraw_rate_BtoA", "Demand→withdraw B→A/1k"),
-        ("bid_response_ratio_affection", "Bid response (affection)"),
-        ("bid_response_ratio_play", "Bid response (play)"),
-        ("bid_response_ratio_gratitude", "Bid response (gratitude)"),
+        ("demand_withdraw_rate.dw_AtoB", "Demand→withdraw A→B/1k"),
+        ("demand_withdraw_rate.dw_BtoA", "Demand→withdraw B→A/1k"),
+        ("bid_response_ratio.affection", "Bid response (affection)"),
+        ("bid_response_ratio.info", "Bid response (info)"),
+        ("bid_response_ratio.play", "Bid response (play)"),
+        ("bid_response_ratio.requests", "Bid response (requests)"),
         ("median_reply_seconds", "Median reply (s)"),
         ("p90_reply_seconds", "P90 reply (s)"),
         ("reply_variability", "Reply variability"),
         ("emoji_signal_rate", "Emoji per msg"),
         ("lsm_score", "Language style match"),
-        ("we_talk_index", "We-talk index"),
-        ("we_talk_index_context", "We-talk context"),
+        ("we_talk_index.value", "We-talk index"),
+        ("we_talk_index.context", "We-talk context"),
         ("affection_density", "Affection density/100"),
         ("gratitude_density", "Gratitude density/100"),
         ("future_planning_density", "Future planning/100"),
         ("plan_to_happen_ratio", "Plans → happen ratio"),
         ("follow_through_latency_hours", "Follow-through median (h)"),
-        ("support_balance_index", "Support balance index"),
+        ("support_balance_index.A", "Support balance A"),
+        ("support_balance_index.B", "Support balance B"),
         ("boundary_violations_per_1k", "Boundary hits/1k"),
         ("contempt_markers_per_1k", "Contempt markers/1k"),
         ("ruptures_per_month", "Ruptures/month"),
@@ -79,7 +81,7 @@ def _format_metric_lines(metrics: Dict[str, float | str]) -> List[str]:
     ]
     lines: List[str] = []
     for key, label in order:
-        value = metrics.get(key)
+        value = flat.get(key)
         if isinstance(value, str):
             lines.append(f"{label}: {value}")
             continue
@@ -87,20 +89,25 @@ def _format_metric_lines(metrics: Dict[str, float | str]) -> List[str]:
             formatted = "0.00"
         elif key == "repair_effectiveness_pct":
             formatted = f"{value:.0f}%"
-        elif key in {"median_reply_seconds", "p90_reply_seconds", "reply_variability"}:
+        elif key in {"median_reply_seconds", "p90_reply_seconds"}:
             formatted = f"{value:.0f}"
-        else:
+        elif key == "reply_variability":
             formatted = f"{value:.2f}"
+        else:
+            formatted = f"{float(value):.2f}"
         lines.append(f"{label}: {formatted}")
     return lines
 
 
-def _status_tip(metrics: Dict[str, float | str], sla_seconds: float | None = None) -> str:
-    reciprocity = float(metrics.get("neg_affect_reciprocity", 0.0))
-    plan_ratio = float(metrics.get("plan_to_happen_ratio", 1.0))
-    conflict_ratio = float(metrics.get("p_to_n_conflict_ratio", 1.0))
-    support_gap = abs(float(metrics.get("support_balance_index", 0.0)))
-    median_reply = float(metrics.get("median_reply_seconds", 0.0))
+def _status_tip(flat: Dict[str, object], sla_seconds: float | None = None) -> str:
+    reciprocity = float(flat.get("neg_affect_reciprocity", 0.0))
+    plan_ratio = float(flat.get("plan_to_happen_ratio", 1.0))
+    conflict_ratio = float(flat.get("p_to_n_conflict_ratio", 1.0))
+    support_gap = max(
+        abs(float(flat.get("support_balance_index.A", 0.0))),
+        abs(float(flat.get("support_balance_index.B", 0.0))),
+    )
+    median_reply = float(flat.get("median_reply_seconds", 0.0))
     if sla_seconds and median_reply > sla_seconds:
         minutes = median_reply / 60.0
         return (
@@ -121,8 +128,9 @@ def _status_tip(metrics: Dict[str, float | str], sla_seconds: float | None = Non
 async def status(couple_id: int) -> str:
     messages = db.fetch_recent_messages(couple_id, limit=200)
     metrics = compute.compute_metrics(messages)
+    flat = compute.flatten_metrics(metrics)
     prev_baselines: Dict[str, float] = {}
-    for key, value in metrics.items():
+    for key, value in flat.items():
         if isinstance(value, (int, float)):
             prev_baselines[key] = db.get_stat(
                 couple_id,
@@ -132,7 +140,7 @@ async def status(couple_id: int) -> str:
     bands = thresholds.update_baselines(couple_id, metrics)
 
     lines = ["Status snapshot:"]
-    lines.extend(_format_metric_lines(metrics))
+    lines.extend(_format_metric_lines(flat))
 
     couple = db.fetch_couple(couple_id)
     sla_seconds = None
@@ -159,13 +167,14 @@ async def status(couple_id: int) -> str:
     risks: List[str] = []
     for key in (
         "neg_affect_reciprocity",
-        "demand_withdraw_rate_AtoB",
-        "demand_withdraw_rate_BtoA",
+        "demand_withdraw_rate.dw_AtoB",
+        "demand_withdraw_rate.dw_BtoA",
         "boundary_violations_per_1k",
         "contempt_markers_per_1k",
-        "support_balance_index",
+        "support_balance_index.A",
+        "support_balance_index.B",
     ):
-        value = float(metrics.get(key, 0.0))
+        value = float(flat.get(key, 0.0))
         prev = _prev_baseline(key)
         baseline, sigma = _band(key)
         baseline_for_eval = prev if prev is not None else baseline
@@ -174,7 +183,7 @@ async def status(couple_id: int) -> str:
 
     logistics_alerts: List[str] = []
     for key in ("median_reply_seconds", "plan_to_happen_ratio"):
-        value = float(metrics.get(key, 0.0))
+        value = float(flat.get(key, 0.0))
         if thresholds.evaluate_logistics(
             key,
             value,
@@ -184,7 +193,7 @@ async def status(couple_id: int) -> str:
 
     praises: List[str] = []
     for key in ("p_to_n_conflict_ratio", "follow_through_latency_hours"):
-        value = float(metrics.get(key, 0.0))
+        value = float(flat.get(key, 0.0))
         prev = _prev_baseline(key)
         baseline, sigma = _band(key)
         baseline_for_eval = prev if prev is not None else baseline
@@ -198,8 +207,9 @@ async def status(couple_id: int) -> str:
     if logistics_alerts:
         lines.append("Active logistics: " + ", ".join(logistics_alerts))
 
-    lines.append(_status_tip(metrics, sla_seconds))
-    return "\n".join(lines)
+    lines.append(_status_tip(flat, sla_seconds))
+    return "
+".join(lines)
 
 
 async def advice(couple_id: int, user_id: int, label: Optional[str] = None) -> str:

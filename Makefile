@@ -1,10 +1,13 @@
-.PHONY: setup run test seed fmt
+.PHONY: setup run test seed fmt worker
 
 setup:
 pip install -r requirements.txt
 
 run:
 python -m couples_bot.app
+
+worker:
+python -m workers.reag_worker
 
 test:
 pytest

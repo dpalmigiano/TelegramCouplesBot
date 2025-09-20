@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Generator, Iterable, Iterator, Sequence
+import random
+import time
+from typing import Iterable, Iterator, Sequence
 
 from ..config import get_settings
 
@@ -15,6 +17,10 @@ try:
     from groq import Groq  # type: ignore
 except Exception:  # pragma: no cover
     Groq = None  # type: ignore
+
+
+REQUEST_TIMEOUT = 30.0
+MAX_RETRIES = 3
 
 
 class LLMDisabled(RuntimeError):
@@ -34,26 +40,42 @@ def _streaming_iterator(chunks: Iterable) -> Iterator[str]:
             yield choice.message.get("content", "")
 
 
+def _with_retries(func):
+    delay = 1.0
+    last_error: Exception | None = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            return func()
+        except Exception as exc:  # pragma: no cover - network/provider failures
+            last_error = exc
+            if attempt == MAX_RETRIES - 1:
+                raise
+            time.sleep(delay + random.uniform(0, 0.3))
+            delay *= 2
+    if last_error:
+        raise last_error
+    raise RuntimeError("Unreachable")
+
+
 def _openai_complete(messages, *, max_tokens, temperature, stream):
     settings = get_settings()
     if OpenAI is None or not settings.openai_api_key:
         raise LLMDisabled("OpenAI unavailable")
-    client = OpenAI(api_key=settings.openai_api_key)
-    if stream:
-        chunks = client.chat.completions.create(
+
+    client = OpenAI(api_key=settings.openai_api_key, timeout=REQUEST_TIMEOUT)
+
+    def _invoke():
+        return client.chat.completions.create(
             model=settings.openai_model,
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
-            stream=True,
+            stream=stream,
         )
-        return _streaming_iterator(chunks)
-    response = client.chat.completions.create(
-        model=settings.openai_model,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
+
+    response = _with_retries(_invoke)
+    if stream:
+        return _streaming_iterator(response)
     return response.choices[0].message.get("content", "")
 
 
@@ -69,30 +91,27 @@ def _groq_complete(
     settings = get_settings()
     if Groq is None or not settings.groq_api_key:
         raise LLMDisabled("Groq unavailable")
-    client = Groq(api_key=settings.groq_api_key)
-    model = settings.groq_model if not use_tools else "groq/compound"
-    extra = {}
+
+    client = Groq(api_key=settings.groq_api_key, timeout=REQUEST_TIMEOUT)
+    model = settings.groq_model
+    extra: dict[str, object] = {}
     if use_tools:
-        extra["compound_custom"] = {
-            "tools": {"enabled_tools": list(enabled_tools)}
-        }
-    if stream:
-        chunks = client.chat.completions.create(
+        model = "groq/compound"
+        extra["compound_custom"] = {"tools": {"enabled_tools": list(enabled_tools)}}
+
+    def _invoke():
+        return client.chat.completions.create(
             model=model,
             messages=messages,
             temperature=temperature,
             max_completion_tokens=max_tokens,
-            stream=True,
+            stream=stream,
             **extra,
         )
-        return _streaming_iterator(chunks)
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        max_completion_tokens=max_tokens,
-        **extra,
-    )
+
+    response = _with_retries(_invoke)
+    if stream:
+        return _streaming_iterator(response)
     return response.choices[0].message.get("content", "")
 
 
@@ -103,7 +122,7 @@ def llm_complete(
     temperature: float = 0.3,
     stream: bool = False,
     use_tools: bool = False,
-    enabled_tools: Iterable[str] = (),
+    enabled_tools: tuple[str, ...] = (),
 ):
     """Call the primary LLM provider, falling back automatically."""
 

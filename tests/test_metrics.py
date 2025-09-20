@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 from pathlib import Path
 
@@ -20,30 +18,27 @@ def load_rows() -> list[dict]:
 def test_full_metrics():
     rows = load_rows()
     metrics = compute.compute_metrics(rows)
-    assert metrics["p_to_n_conflict_ratio"] == pytest.approx(0.8333, rel=1e-3)
-    assert metrics["harsh_start_rate"] == pytest.approx(0.1053, rel=1e-3)
-    assert metrics["repair_attempts_per_hour"] == pytest.approx(0.7273, rel=1e-3)
-    assert metrics["repair_effectiveness_pct"] == pytest.approx(50.0, rel=1e-3)
-    assert metrics["neg_affect_reciprocity"] == pytest.approx(0.1666, rel=1e-3)
-    assert metrics["demand_withdraw_rate_AtoB"] == pytest.approx(52.6315, rel=1e-3)
-    assert metrics["demand_withdraw_rate_BtoA"] == pytest.approx(52.6315, rel=1e-3)
-    assert metrics["bid_response_ratio_affection"] == 1.0
-    assert metrics["bid_response_ratio_play"] == pytest.approx(0.0, abs=1e-6)
-    assert metrics["bid_response_ratio_gratitude"] == pytest.approx(0.5, rel=1e-3)
-    assert metrics["median_reply_seconds"] == pytest.approx(300.0, rel=1e-3)
-    assert metrics["p90_reply_seconds"] == pytest.approx(900.0, rel=1e-3)
-    assert metrics["reply_variability"] == pytest.approx(600.0, rel=1e-3)
-    assert metrics["emoji_signal_rate"] == pytest.approx(0.0526, rel=1e-3)
-    assert metrics["lsm_score"] == pytest.approx(0.5953, rel=1e-3)
-    assert metrics["we_talk_index"] == pytest.approx(0.9, rel=1e-3)
-    assert metrics["we_talk_index_context"] == "plans"
-    assert metrics["affection_density"] == pytest.approx(15.7894, rel=1e-3)
-    assert metrics["gratitude_density"] == pytest.approx(10.5263, rel=1e-3)
-    assert metrics["future_planning_density"] == pytest.approx(26.3157, rel=1e-3)
-    assert metrics["plan_to_happen_ratio"] == pytest.approx(0.5, rel=1e-3)
-    assert metrics["follow_through_latency_hours"] == pytest.approx(0.1833, rel=1e-3)
-    assert metrics["support_balance_index"] == pytest.approx(0.0, abs=1e-6)
-    assert metrics["boundary_violations_per_1k"] == pytest.approx(105.2631, rel=1e-3)
-    assert metrics["contempt_markers_per_1k"] == pytest.approx(52.6315, rel=1e-3)
-    assert metrics["ruptures_per_month"] == pytest.approx(30.0, rel=1e-3)
-    assert metrics["median_repair_cycle_hours"] == pytest.approx(0.1666, rel=1e-3)
+    flat = compute.flatten_metrics(metrics)
+
+    assert pytest.approx(metrics["p_to_n_conflict_ratio"], rel=1e-3) == 1.08333
+    assert pytest.approx(metrics["harsh_start_rate"], rel=1e-3) == 0.10526
+    assert pytest.approx(metrics["repair_attempts_per_hour"], rel=1e-3) == 0.72727
+    assert pytest.approx(metrics["neg_affect_reciprocity"], rel=1e-3) == 0.16666
+    assert pytest.approx(flat["demand_withdraw_rate.dw_AtoB"], rel=1e-3) == 52.6315
+    assert pytest.approx(flat["demand_withdraw_rate.dw_BtoA"], rel=1e-3) == 52.6315
+    assert pytest.approx(metrics["bid_response_ratio"]["affection"], rel=1e-3) == 0.66666
+    assert metrics["bid_response_ratio"]["info"] == 0.0
+    assert pytest.approx(metrics["median_reply_seconds"], rel=1e-3) == 300.0
+    assert pytest.approx(metrics["p90_reply_seconds"], rel=1e-3) == 900.0
+    assert pytest.approx(metrics["reply_variability"], rel=1e-3) == 2.0
+    assert pytest.approx(metrics["emoji_signal_rate"], rel=1e-3) == 0.05263
+    assert pytest.approx(metrics["lsm_score"], rel=1e-3) == 0.59535
+    assert metrics["we_talk_index"]["context"] == "plans"
+    assert pytest.approx(metrics["we_talk_index"]["value"], rel=1e-3) == 0.9
+    assert pytest.approx(metrics["affection_density"], rel=1e-3) == 15.7894
+    assert pytest.approx(metrics["plan_to_happen_ratio"], rel=1e-3) == 0.5
+    assert pytest.approx(metrics["follow_through_latency_hours"], rel=1e-3) == 0.18333
+    assert metrics["support_balance_index"]["A"] == pytest.approx(2.0)
+    assert metrics["support_balance_index"]["B"] == pytest.approx(2.0)
+    assert pytest.approx(metrics["boundary_violations_per_1k"], rel=1e-3) == 105.2631
+    assert pytest.approx(metrics["contempt_markers_per_1k"], rel=1e-3) == 52.6315

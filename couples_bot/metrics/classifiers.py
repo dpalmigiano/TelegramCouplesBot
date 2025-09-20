@@ -87,11 +87,28 @@ SUPPORT_REQUEST_PHRASES = {
     "i need you",
     "will you",
 }
+INFO_BID_PHRASES = {
+    "look at",
+    "check this",
+    "fyi",
+    "guess what",
+    "did you know",
+    "sending you",
+}
+REQUEST_BID_PHRASES = {
+    "can we",
+    "let's",
+    "could we",
+    "would you",
+    "help me",
+}
 
 BID_LEXICON: Dict[str, set[str]] = {
     "affection": {"hug", "kiss", "miss you", "cuddle", "hold hands"},
     "play": {"meme", "joke", "game", "funny"},
     "gratitude": {"thank", "appreciate", "grateful"},
+    "info": INFO_BID_PHRASES,
+    "requests": REQUEST_BID_PHRASES,
 }
 
 COMMITMENT_WORDS = {"plan", "schedule", "book", "reserve", "setup", "organize"}
@@ -183,6 +200,8 @@ def classify_bid(text: str) -> Optional[str]:
     for bid_type, phrases in BID_LEXICON.items():
         if any(phrase in lowered for phrase in phrases):
             return bid_type
+    if is_support_request(text):
+        return "requests"
     return None
 
 
@@ -206,6 +225,7 @@ __all__ = [
     "is_repair_success",
     "is_turn_toward",
     "is_follow_through",
+    "harsh_start",
     "is_soft_start",
     "is_demand",
     "is_withdraw",
@@ -214,7 +234,6 @@ __all__ = [
     "is_affection",
     "is_gratitude",
     "mentions_future",
-    "harsh_start",
     "classify_bid",
     "contains_commitment",
     "contains_confirmation",

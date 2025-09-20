@@ -23,10 +23,22 @@ class Settings(BaseSettings):
     openai_model: str = Field(default="o4-mini", alias="OPENAI_MODEL")
     groq_api_key: Optional[str] = Field(default=None, alias="GROQ_API_KEY")
     groq_model: str = Field(default="openai/gpt-oss-120b", alias="GROQ_MODEL")
+    groq_fallback_model: str = Field(
+        default="llama-3.3-70b-versatile", alias="GROQ_FALLBACK_MODEL"
+    )
 
     default_tz: str = Field(default="UTC", alias="DEFAULT_TZ")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     database_path: Path = Field(default=Path("couples.sqlite"), alias="DATABASE_PATH")
+
+    reag_silence_secs: int = Field(default=180, alias="REAG_SILENCE_SECS")
+    reag_min_interval_secs: int = Field(default=300, alias="REAG_MIN_INTERVAL_SECS")
+    reag_queue_high_watermark: int = Field(
+        default=12, alias="REAG_QUEUE_HIGH_WATERMARK"
+    )
+    reag_max_out_tokens: int = Field(default=4096, alias="REAG_MAX_OUT_TOKENS")
+
+    graph_enabled: bool = Field(default=False, alias="GRAPH_ENABLED")
 
     class Config:
         env_file = ".env"

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import types
 
 import pytest
@@ -16,6 +14,12 @@ def _base_env(monkeypatch):
     monkeypatch.setenv("DATABASE_PATH", ":memory:")
     monkeypatch.setenv("DEFAULT_TZ", "UTC")
     monkeypatch.setenv("LOG_LEVEL", "INFO")
+    monkeypatch.setenv("REAG_SILENCE_SECS", "180")
+    monkeypatch.setenv("REAG_MIN_INTERVAL_SECS", "300")
+    monkeypatch.setenv("REAG_QUEUE_HIGH_WATERMARK", "12")
+    monkeypatch.setenv("REAG_MAX_OUT_TOKENS", "4096")
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fallback-model")
+    monkeypatch.setenv("GRAPH_ENABLED", "false")
 
 
 def test_openai_primary(monkeypatch):
@@ -25,14 +29,19 @@ def test_openai_primary(monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "")
     get_settings.cache_clear()
 
+    calls = {}
+
     class DummyOpenAI:
-        def __init__(self, api_key):
+        def __init__(self, api_key, timeout=None):
+            calls["client"] = {"api_key": api_key, "timeout": timeout}
             self.chat = types.SimpleNamespace(
-                completions=types.SimpleNamespace(
-                    create=lambda **kwargs: types.SimpleNamespace(
-                        choices=[types.SimpleNamespace(message={"content": "hi"})]
-                    )
-                )
+                completions=types.SimpleNamespace(create=self._create)
+            )
+
+        def _create(self, **kwargs):
+            calls["kwargs"] = kwargs
+            return types.SimpleNamespace(
+                choices=[types.SimpleNamespace(message={"content": "hi"})]
             )
 
     monkeypatch.setattr(provider, "OpenAI", DummyOpenAI)
@@ -40,6 +49,9 @@ def test_openai_primary(monkeypatch):
 
     result = provider.llm_complete([{"role": "user", "content": "hi"}])
     assert result == "hi"
+    assert calls["client"]["api_key"] == "key"
+    assert calls["kwargs"]["max_tokens"] == 300
+    assert "max_completion_tokens" not in calls["kwargs"]
 
 
 def test_groq_plain(monkeypatch):
@@ -52,15 +64,16 @@ def test_groq_plain(monkeypatch):
     calls = {}
 
     class DummyGroq:
-        def __init__(self, api_key):
-            def create(**kwargs):
-                calls["kwargs"] = kwargs
-                return types.SimpleNamespace(
-                    choices=[types.SimpleNamespace(message={"content": "fallback"})]
-                )
-
+        def __init__(self, api_key, timeout=None):
+            calls["client"] = {"api_key": api_key, "timeout": timeout}
             self.chat = types.SimpleNamespace(
-                completions=types.SimpleNamespace(create=create)
+                completions=types.SimpleNamespace(create=self._create)
+            )
+
+        def _create(self, **kwargs):
+            calls["kwargs"] = kwargs
+            return types.SimpleNamespace(
+                choices=[types.SimpleNamespace(message={"content": "fallback"})]
             )
 
     monkeypatch.setattr(provider, "OpenAI", None)
@@ -69,6 +82,7 @@ def test_groq_plain(monkeypatch):
     result = provider.llm_complete([{"role": "user", "content": "hi"}])
     assert result == "fallback"
     assert calls["kwargs"]["model"] == "openai/gpt-oss-120b"
+    assert calls["kwargs"]["max_completion_tokens"] == 300
 
 
 def test_groq_tools(monkeypatch):
@@ -79,21 +93,21 @@ def test_groq_tools(monkeypatch):
     get_settings.cache_clear()
 
     class StubOpenAI:
-        def __init__(self, api_key):
+        def __init__(self, api_key, timeout=None):
             raise AssertionError("OpenAI should be skipped when tools requested")
 
     captured = {}
 
     class DummyGroq:
-        def __init__(self, api_key):
-            def create(**kwargs):
-                captured["kwargs"] = kwargs
-                return types.SimpleNamespace(
-                    choices=[types.SimpleNamespace(message={"content": "tools"})]
-                )
-
+        def __init__(self, api_key, timeout=None):
             self.chat = types.SimpleNamespace(
-                completions=types.SimpleNamespace(create=create)
+                completions=types.SimpleNamespace(create=self._create)
+            )
+
+        def _create(self, **kwargs):
+            captured["kwargs"] = kwargs
+            return types.SimpleNamespace(
+                choices=[types.SimpleNamespace(message={"content": "tools"})]
             )
 
     monkeypatch.setattr(provider, "OpenAI", StubOpenAI)
@@ -107,6 +121,39 @@ def test_groq_tools(monkeypatch):
     assert result == "tools"
     assert captured["kwargs"]["model"] == "groq/compound"
     assert captured["kwargs"]["compound_custom"] == {"tools": {"enabled_tools": ["calendar"]}}
+    assert captured["kwargs"]["max_completion_tokens"] == 300
+
+
+def test_streaming(monkeypatch):
+    _base_env(monkeypatch)
+    monkeypatch.setenv("ENABLE_LLM", "1")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    monkeypatch.setenv("GROQ_API_KEY", "groq")
+    get_settings.cache_clear()
+
+    class DummyGroq:
+        def __init__(self, api_key, timeout=None):
+            self.chat = types.SimpleNamespace(
+                completions=types.SimpleNamespace(create=self._create)
+            )
+
+        def _create(self, **kwargs):
+            chunk1 = types.SimpleNamespace(
+                choices=[types.SimpleNamespace(delta=types.SimpleNamespace(content="hel"))]
+            )
+            chunk2 = types.SimpleNamespace(
+                choices=[types.SimpleNamespace(delta=types.SimpleNamespace(content="lo"))]
+            )
+            return [chunk1, chunk2]
+
+    monkeypatch.setattr(provider, "OpenAI", None)
+    monkeypatch.setattr(provider, "Groq", DummyGroq)
+
+    iterator = provider.llm_complete(
+        [{"role": "user", "content": "hi"}],
+        stream=True,
+    )
+    assert "".join(iterator) == "hello"
 
 
 def test_disabled(monkeypatch):

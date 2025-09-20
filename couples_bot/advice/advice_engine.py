@@ -1,4 +1,4 @@
-"""Advice builder for each partner."""
+"""Advice generation helpers."""
 
 from __future__ import annotations
 
@@ -48,19 +48,6 @@ SIGNAL_TEMPLATES: Dict[str, Dict[str, str]] = {
 }
 
 
-def _metrics_summary(metrics: Dict[str, float]) -> str:
-    highlights = [
-        f"conflict ratio {metrics.get('p_to_n_conflict_ratio', 0):.2f}",
-        f"harsh start rate {metrics.get('harsh_start_rate', 0):.2f}",
-        f"median reply {metrics.get('median_reply_seconds', 0)/60:.1f}m",
-        f"neg reciprocity {metrics.get('neg_affect_reciprocity', 0):.2f}",
-        f"plan ratio {metrics.get('plan_to_happen_ratio', 1.0):.2f}",
-        f"support balance {metrics.get('support_balance_index', 0):.1f}",
-        f"follow-through {metrics.get('follow_through_latency_hours', 0):.1f}h",
-    ]
-    return ", ".join(highlights)
-
-
 def _trim_words(text: str, limit: int = 120) -> str:
     words = text.split()
     if len(words) <= limit:
@@ -68,53 +55,64 @@ def _trim_words(text: str, limit: int = 120) -> str:
     return " ".join(words[:limit]) + "…"
 
 
-def _risk_signals(metrics: Dict[str, float | str]) -> List[Tuple[float, str]]:
+def _metrics_summary(flat: Dict[str, float]) -> str:
+    highlights = [
+        f"conflict ratio {flat.get('p_to_n_conflict_ratio', 0):.2f}",
+        f"harsh start {flat.get('harsh_start_rate', 0):.2f}",
+        f"median reply {flat.get('median_reply_seconds', 0)/60:.1f}m",
+        f"neg reciprocity {flat.get('neg_affect_reciprocity', 0):.2f}",
+        f"plan ratio {flat.get('plan_to_happen_ratio', 1.0):.2f}",
+        f"follow-through {flat.get('follow_through_latency_hours', 0):.1f}h",
+    ]
+    return ", ".join(highlights)
+
+
+def _risk_signals(flat: Dict[str, float]) -> List[Tuple[float, str]]:
     scores: List[Tuple[float, str]] = []
-    neg = float(metrics.get("neg_affect_reciprocity", 0.0))
+    neg = float(flat.get("neg_affect_reciprocity", 0.0))
     if neg > 0.05:
         scores.append((neg, "neg_affect"))
-    demand = max(
-        float(metrics.get("demand_withdraw_rate_AtoB", 0.0)),
-        float(metrics.get("demand_withdraw_rate_BtoA", 0.0)),
-    )
-    if demand > 0:
-        scores.append(((demand / 100.0), "demand_withdraw"))
-    boundary = float(metrics.get("boundary_violations_per_1k", 0.0))
+    dw_a = float(flat.get("demand_withdraw_rate.dw_AtoB", 0.0))
+    dw_b = float(flat.get("demand_withdraw_rate.dw_BtoA", 0.0))
+    if max(dw_a, dw_b) > 0:
+        scores.append(((max(dw_a, dw_b) / 100.0), "demand_withdraw"))
+    boundary = float(flat.get("boundary_violations_per_1k", 0.0))
     if boundary > 0:
         scores.append(((boundary / 100.0), "boundary"))
-    contempt = float(metrics.get("contempt_markers_per_1k", 0.0))
+    contempt = float(flat.get("contempt_markers_per_1k", 0.0))
     if contempt > 0:
         scores.append(((contempt / 100.0), "contempt"))
-    plan_gap = max(0.0, 1.0 - float(metrics.get("plan_to_happen_ratio", 1.0)))
+    plan_gap = max(0.0, 1.0 - float(flat.get("plan_to_happen_ratio", 1.0)))
     if plan_gap > 0.1:
         scores.append((plan_gap, "plan_slip"))
-    median_reply = float(metrics.get("median_reply_seconds", 0.0))
+    median_reply = float(flat.get("median_reply_seconds", 0.0))
     if median_reply > 1200:  # >20 minutes
         scores.append(((median_reply - 1200) / 1200.0, "slow_reply"))
-    support_gap = abs(float(metrics.get("support_balance_index", 0.0)))
+    support_gap = max(abs(float(flat.get("support_balance_index.A", 0.0))), abs(float(flat.get("support_balance_index.B", 0.0))))
     if support_gap >= 4:
         scores.append((support_gap / 10.0, "support_gap"))
     return sorted(scores, key=lambda item: item[0], reverse=True)
 
 
-def _bright_spots(metrics: Dict[str, float | str]) -> List[str]:
+def _bright_spots(flat: Dict[str, float]) -> List[str]:
     spots: List[str] = []
-    if float(metrics.get("repair_effectiveness_pct", 0.0)) >= 50:
+    if float(flat.get("repair_effectiveness_pct", 0.0)) >= 50:
         spots.append("your repair attempts landed recently")
-    latency = float(metrics.get("follow_through_latency_hours", 0.0))
+    latency = float(flat.get("follow_through_latency_hours", 0.0))
     if 0 < latency <= 6:
         spots.append("follow-through stayed quick")
-    if float(metrics.get("p_to_n_conflict_ratio", 1.0)) >= 2.0:
+    if float(flat.get("p_to_n_conflict_ratio", 1.0)) >= 2.0:
         spots.append("the positivity ratio is strong")
     return spots
 
 
-def _rule_based(metrics: Dict[str, float | str], partner_label: str) -> str:
-    signals = _risk_signals(metrics)
-    bright = _bright_spots(metrics)
+def _rule_based(metrics: Dict[str, object], partner_label: str) -> str:
+    flat = compute.flatten_metrics(metrics)
+    signals = _risk_signals({k: float(v) for k, v in flat.items() if isinstance(v, (int, float))})
+    bright = _bright_spots({k: float(v) for k, v in flat.items() if isinstance(v, (int, float))})
 
     if signals:
-        descriptions = [SIGNAL_TEMPLATES[signal]["desc"] for _, signal in signals[:2] if signal in SIGNAL_TEMPLATES]
+        descriptions = [SIGNAL_TEMPLATES[sig]["desc"] for _, sig in signals[:2] if sig in SIGNAL_TEMPLATES]
         if descriptions:
             empathy = "It sounds like " + " and ".join(descriptions) + "."
         else:
@@ -143,32 +141,56 @@ def _rule_based(metrics: Dict[str, float | str], partner_label: str) -> str:
     return f"Hey {partner_label}, {empathy} {action} Try this phrasing: {phrase}"
 
 
+def _call_llm(messages: List[dict], *, max_tokens: int = 320) -> str:
+    result = provider.llm_complete(
+        messages,
+        max_tokens=max_tokens,
+        temperature=0.3,
+    )
+    if isinstance(result, str):
+        return result.strip()
+    return "".join(result).strip()
+
+
 def build_advice_for_user(couple_id: int, user_id: int, partner_label: str | None = None) -> str:
     """Generate advice text for the specified partner."""
 
     partner_label = partner_label or f"partner {user_id}"
     messages = db.fetch_recent_messages(couple_id, limit=120)
     metrics = compute.compute_metrics(messages)
+    flat = compute.flatten_metrics(metrics)
 
-    summary = _metrics_summary(metrics)
+    summary = _metrics_summary({k: float(v) for k, v in flat.items() if isinstance(v, (int, float))})
     try:
         chat_messages = prompts.advice_prompt(partner_label, summary)
-        result = provider.llm_complete(
-            chat_messages,
-            max_tokens=320,
-            temperature=0.3,
-        )
-        if isinstance(result, str):
-            advice_text = result.strip()
-        else:
-            advice_text = "".join(result).strip()
+        advice_text = _call_llm(chat_messages)
     except provider.LLMDisabled:
         advice_text = _rule_based(metrics, partner_label)
 
     advice_text = _trim_words(advice_text)
-
     db.upsert_advice(couple_id, user_id, advice_text)
     return advice_text
 
 
-__all__ = ["build_advice_for_user"]
+def build_advocate_for_user(
+    couple_id: int,
+    user_id: int,
+    issue: str,
+    partner_label: str | None = None,
+) -> str:
+    """Generate an advocacy message (steelman + ask) for a partner."""
+
+    partner_label = partner_label or f"partner {user_id}"
+    try:
+        chat_messages = prompts.advocate_prompt(partner_label, issue)
+        text = _call_llm(chat_messages, max_tokens=200)
+    except provider.LLMDisabled:
+        text = (
+            f"Hey {partner_label}, lead with one empathy line then the ask: say you get why it matters, "
+            f"name the specific support you need, and confirm timing. Try this phrasing: \"I know __ is a lot. "
+            f"Could you handle __ by __? It would help me breathe.\""
+        )
+    return _trim_words(text)
+
+
+__all__ = ["build_advice_for_user", "build_advocate_for_user"]

@@ -1,12 +1,10 @@
-"""SQLite helpers for the couples coach bot."""
-
 from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, Optional
+from typing import Dict, Iterable, Iterator, List, Optional
 
 from .config import get_settings
 
@@ -46,6 +44,12 @@ def run_migrations() -> None:
     sql = schema_path.read_text(encoding="utf-8")
     with get_conn() as conn:
         conn.executescript(sql)
+
+
+def list_couples() -> List[sqlite3.Row]:
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM couples").fetchall()
+    return list(rows)
 
 
 def link_couple(
@@ -97,6 +101,38 @@ def fetch_couple_by_user(user_id: int) -> Optional[sqlite3.Row]:
 def fetch_couple(couple_id: int) -> Optional[sqlite3.Row]:
     with get_conn() as conn:
         return conn.execute("SELECT * FROM couples WHERE id = ?", (couple_id,)).fetchone()
+
+
+def fetch_last_message_ts(couple_id: int) -> Optional[datetime]:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT ts FROM messages WHERE couple_id = ? ORDER BY ts DESC LIMIT 1",
+            (couple_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return datetime.fromisoformat(row["ts"])
+
+
+def fetch_messages_since(
+    couple_id: int,
+    since: Optional[datetime],
+    *,
+    limit: Optional[int] = None,
+) -> List[sqlite3.Row]:
+    query = ["SELECT * FROM messages WHERE couple_id = ?"]
+    params: List[object] = [couple_id]
+    if since is not None:
+        query.append("AND ts > ?")
+        params.append(since.isoformat())
+    query.append("ORDER BY ts ASC")
+    if limit is not None:
+        query.append("LIMIT ?")
+        params.append(limit)
+    sql = " ".join(query)
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return list(rows)
 
 
 def upsert_advice(couple_id: int, for_user_id: int, advice_text: str) -> None:
@@ -201,7 +237,9 @@ def record_cooldown(couple_id: int, user_id: int, metric_key: str, ts: datetime)
 
 
 def fetch_cooldown(
-    couple_id: int, user_id: int, metric_key: str
+    couple_id: int,
+    user_id: int,
+    metric_key: str,
 ) -> Optional[datetime]:
     with get_conn() as conn:
         row = conn.execute(
@@ -287,16 +325,21 @@ def wipe_couple(couple_id: int) -> None:
         conn.execute("DELETE FROM thresholds WHERE couple_id = ?", (couple_id,))
         conn.execute("DELETE FROM cooldowns WHERE couple_id = ?", (couple_id,))
         conn.execute("DELETE FROM prefs WHERE couple_id = ?", (couple_id,))
+        conn.execute("DELETE FROM jobs WHERE couple_id = ?", (couple_id,))
+        conn.execute("DELETE FROM reag_runs WHERE couple_id = ?", (couple_id,))
         conn.execute("DELETE FROM couples WHERE id = ?", (couple_id,))
 
 
 __all__ = [
     "get_conn",
     "run_migrations",
+    "list_couples",
     "link_couple",
     "fetch_couple_by_group",
     "fetch_couple_by_user",
     "fetch_couple",
+    "fetch_last_message_ts",
+    "fetch_messages_since",
     "upsert_advice",
     "fetch_advice",
     "log_message",

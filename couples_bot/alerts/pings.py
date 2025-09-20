@@ -92,7 +92,10 @@ async def maybe_ping(
 
 
 def _format_value(metric_key: str, value: float) -> str:
-    if metric_key in {"demand_withdraw_rate_AtoB", "demand_withdraw_rate_BtoA"}:
+    if metric_key in {
+        "demand_withdraw_rate.dw_AtoB",
+        "demand_withdraw_rate.dw_BtoA",
+    }:
         return f"Rate: {value:.0f} per 1k turns."
     if metric_key in {"boundary_violations_per_1k", "contempt_markers_per_1k"}:
         return f"Rate: {value:.1f} per 1k turns."
@@ -120,8 +123,8 @@ def format_ping(kind: AlertKind, metric_key: str, value: float | None = None) ->
     tails = {
         "harsh_start_rate": "try a soft opener next time. Offer one feeling + one ask.",
         "neg_affect_reciprocity": "tension is spreading—reset the tone with a validating line, then problem-solve.",
-        "demand_withdraw_rate_AtoB": "their retreat signals overload. Trade the demand for two choices you can live with.",
-        "demand_withdraw_rate_BtoA": "their retreat signals overload. Trade the demand for two choices you can live with.",
+        "demand_withdraw_rate.dw_AtoB": "their retreat signals overload. Trade the demand for two choices you can live with.",
+        "demand_withdraw_rate.dw_BtoA": "their retreat signals overload. Trade the demand for two choices you can live with.",
         "boundary_violations_per_1k": "the last note crossed a boundary. Rephrase with your need + a clear request.",
         "contempt_markers_per_1k": "contempt spiked. Step away, then come back with one appreciation before the ask.",
         "repair_success": "that repair landed. Keep that tone going tonight.",

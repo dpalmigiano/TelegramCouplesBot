@@ -181,8 +181,9 @@ def register(client) -> None:
 
         messages = db.fetch_recent_messages(couple_id, limit=200)
         metrics = compute.compute_metrics(messages)
+        flat = compute.flatten_metrics(metrics)
         prev_baselines: dict[str, float] = {}
-        for key, value in metrics.items():
+        for key, value in flat.items():
             if isinstance(value, (int, float)):
                 prev_baselines[key] = db.get_stat(
                     couple_id,
@@ -217,6 +218,7 @@ def register(client) -> None:
             sender_id,
             text,
             metrics,
+            flat,
             ts,
             messages,
             bands,
@@ -239,7 +241,8 @@ async def _maybe_fire_alerts(
     couple,
     sender_id,
     text,
-    metrics,
+    _metrics,
+    flat,
     ts,
     recent_messages,
     bands,
@@ -286,7 +289,7 @@ async def _maybe_fire_alerts(
             text=pings.format_ping(
                 AlertKind.RISK,
                 "harsh_start_rate",
-                metrics.get("harsh_start_rate"),
+                flat.get("harsh_start_rate"),
             ),
             tz_name=tz_name,
         )
@@ -321,7 +324,7 @@ async def _maybe_fire_alerts(
             tz_name=tz_name,
         )
     if classifiers.is_follow_through(text):
-        latency = float(metrics.get("follow_through_latency_hours", 0.0))
+        latency = float(flat.get("follow_through_latency_hours", 0.0))
         baseline, sigma = _band("follow_through_latency_hours")
         if thresholds.evaluate_praise(
             "follow_through_latency_hours", latency, baseline, sigma
@@ -349,7 +352,7 @@ async def _maybe_fire_alerts(
             text=pings.format_ping(
                 AlertKind.RISK,
                 "boundary_violations_per_1k",
-                metrics.get("boundary_violations_per_1k"),
+                flat.get("boundary_violations_per_1k"),
             ),
             tz_name=tz_name,
         )
@@ -363,13 +366,13 @@ async def _maybe_fire_alerts(
             text=pings.format_ping(
                 AlertKind.RISK,
                 "contempt_markers_per_1k",
-                metrics.get("contempt_markers_per_1k"),
+                flat.get("contempt_markers_per_1k"),
             ),
             tz_name=tz_name,
         )
 
     # Praise for high conflict ratio
-    conflict_ratio = float(metrics.get("p_to_n_conflict_ratio", 0.0))
+    conflict_ratio = float(flat.get("p_to_n_conflict_ratio", 0.0))
     baseline_prev = _previous_baseline("p_to_n_conflict_ratio")
     baseline_now, sigma = _band("p_to_n_conflict_ratio")
     baseline_for_eval = baseline_prev if baseline_prev is not None else baseline_now
@@ -392,7 +395,7 @@ async def _maybe_fire_alerts(
             )
 
     # Risky reciprocity
-    reciprocity = float(metrics.get("neg_affect_reciprocity", 0.0))
+    reciprocity = float(flat.get("neg_affect_reciprocity", 0.0))
     baseline_prev = _previous_baseline("neg_affect_reciprocity")
     baseline_now, sigma = _band("neg_affect_reciprocity")
     baseline_for_eval = baseline_prev if baseline_prev is not None else baseline_now
@@ -415,10 +418,10 @@ async def _maybe_fire_alerts(
             )
 
     for key, target in (
-        ("demand_withdraw_rate_AtoB", user_a),
-        ("demand_withdraw_rate_BtoA", user_b),
+        ("demand_withdraw_rate.dw_AtoB", user_a),
+        ("demand_withdraw_rate.dw_BtoA", user_b),
     ):
-        value = float(metrics.get(key, 0.0))
+        value = float(flat.get(key, 0.0))
         baseline_now, sigma = _band(key)
         prev = prev_baselines.get(key)
         jump = False
@@ -436,7 +439,7 @@ async def _maybe_fire_alerts(
                 tz_name=tz_name,
             )
 
-    boundary_metric = float(metrics.get("boundary_violations_per_1k", 0.0))
+    boundary_metric = float(flat.get("boundary_violations_per_1k", 0.0))
     baseline_prev = _previous_baseline("boundary_violations_per_1k")
     baseline_now, sigma = _band("boundary_violations_per_1k")
     baseline_for_eval = baseline_prev if baseline_prev is not None else baseline_now
@@ -458,7 +461,7 @@ async def _maybe_fire_alerts(
                 tz_name=tz_name,
             )
 
-    contempt_metric = float(metrics.get("contempt_markers_per_1k", 0.0))
+    contempt_metric = float(flat.get("contempt_markers_per_1k", 0.0))
     baseline_prev = _previous_baseline("contempt_markers_per_1k")
     baseline_now, sigma = _band("contempt_markers_per_1k")
     baseline_for_eval = baseline_prev if baseline_prev is not None else baseline_now
@@ -498,7 +501,7 @@ async def _maybe_fire_alerts(
                 tz_name=tz_name,
             )
 
-    plan_ratio = float(metrics.get("plan_to_happen_ratio", 1.0))
+    plan_ratio = float(flat.get("plan_to_happen_ratio", 1.0))
     if thresholds.evaluate_logistics("plan_to_happen_ratio", plan_ratio):
         for target in (user_a, user_b):
             await pings.maybe_ping(
@@ -515,7 +518,7 @@ async def _maybe_fire_alerts(
                 tz_name=tz_name,
             )
 
-    median_reply = float(metrics.get("median_reply_seconds", 0.0))
+    median_reply = float(flat.get("median_reply_seconds", 0.0))
     if thresholds.evaluate_logistics(
         "median_reply_seconds",
         median_reply,

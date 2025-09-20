@@ -1,0 +1,7 @@
+telethon
+pydantic>=2
+pydantic-settings
+python-dotenv
+openai>=1.40
+groq
+pytest

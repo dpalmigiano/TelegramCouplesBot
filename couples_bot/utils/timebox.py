@@ -88,3 +88,8 @@ def daily_bucket(dt: datetime) -> str:
     local = dt.date()
     return local.isoformat()
 
+
+def minute_bucket(dt: datetime) -> str:
+    truncated = dt.replace(second=0, microsecond=0)
+    return truncated.isoformat()
+

@@ -2,6 +2,7 @@ import itertools
 import types
 
 import pytest
+
 from couples_bot.config import get_settings
 from couples_bot.llm import provider
 
@@ -19,6 +20,8 @@ def _base_env(monkeypatch):
     monkeypatch.setenv("REAG_QUEUE_HIGH_WATERMARK", "12")
     monkeypatch.setenv("REAG_MAX_OUT_TOKENS", "4096")
     monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fallback-model")
+    monkeypatch.setenv("GROQ_SYSTEM", "")
+    monkeypatch.setenv("GROQ_ENABLED_TOOLS", "[\"web_search\",\"code_interpreter\"]")
     monkeypatch.setenv("GRAPH_ENABLED", "false")
     monkeypatch.setenv("CHAOS_MODE", "0")
     monkeypatch.setenv("CHAOS_LLM_P", "0.2")
@@ -29,6 +32,7 @@ def _base_env(monkeypatch):
         "ONBOARDING_TZ_SUGGESTIONS",
         "[\"America/Los_Angeles\",\"America/New_York\"]",
     )
+    provider._BREAKERS.clear()  # type: ignore[attr-defined]
 
 
 def test_openai_primary(monkeypatch):
@@ -60,17 +64,27 @@ def test_openai_primary(monkeypatch):
     assert result == "hi"
     assert calls["client"]["api_key"] == "key"
     assert calls["kwargs"]["max_tokens"] == 300
+    assert "extra_headers" in calls["kwargs"]
     assert "max_completion_tokens" not in calls["kwargs"]
 
 
-def test_groq_plain(monkeypatch):
+def test_openai_failure_falls_back_to_groq(monkeypatch):
     _base_env(monkeypatch)
     monkeypatch.setenv("ENABLE_LLM", "1")
-    monkeypatch.setenv("OPENAI_API_KEY", "")
+    monkeypatch.setenv("OPENAI_API_KEY", "key")
     monkeypatch.setenv("GROQ_API_KEY", "groq")
     get_settings.cache_clear()
 
     calls = {}
+
+    class DummyOpenAI:
+        def __init__(self, *_, **__):
+            self.chat = types.SimpleNamespace(
+                completions=types.SimpleNamespace(create=self._create)
+            )
+
+        def _create(self, **kwargs):
+            raise RuntimeError("boom")
 
     class DummyGroq:
         def __init__(self, api_key, timeout=None):
@@ -85,25 +99,60 @@ def test_groq_plain(monkeypatch):
                 choices=[types.SimpleNamespace(message={"content": "fallback"})]
             )
 
-    monkeypatch.setattr(provider, "OpenAI", None)
+    monkeypatch.setattr(provider, "OpenAI", DummyOpenAI)
     monkeypatch.setattr(provider, "Groq", DummyGroq)
 
     result = provider.llm_complete([{"role": "user", "content": "hi"}])
     assert result == "fallback"
     assert calls["kwargs"]["model"] == "openai/gpt-oss-120b"
     assert calls["kwargs"]["max_completion_tokens"] == 300
+    assert calls["kwargs"]["extra_headers"].keys() == {"x-client-request-id"}
 
 
-def test_groq_tools(monkeypatch):
+def test_groq_chat_failure_promotes_to_compound(monkeypatch):
     _base_env(monkeypatch)
     monkeypatch.setenv("ENABLE_LLM", "1")
-    monkeypatch.setenv("OPENAI_API_KEY", "key")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
     monkeypatch.setenv("GROQ_API_KEY", "groq")
+    monkeypatch.setenv("GROQ_SYSTEM", "groq/compound")
+    monkeypatch.setenv("GROQ_ENABLED_TOOLS", "[\"web_search\",\"code_interpreter\"]")
     get_settings.cache_clear()
 
-    class StubOpenAI:
+    class DummyGroq:
         def __init__(self, api_key, timeout=None):
-            raise AssertionError("OpenAI should be skipped when tools requested")
+            self.chat = types.SimpleNamespace(
+                completions=types.SimpleNamespace(create=self._create)
+            )
+            self.calls = []
+
+        def _create(self, **kwargs):
+            if kwargs.get("model") == "openai/gpt-oss-120b":
+                raise RuntimeError("chat overloaded")
+            self.calls.append(kwargs)
+            return types.SimpleNamespace(
+                choices=[types.SimpleNamespace(message={"content": "compound"})]
+            )
+
+    groq_instance = DummyGroq("groq")
+    monkeypatch.setattr(provider, "OpenAI", None)
+    monkeypatch.setattr(provider, "Groq", lambda *_, **__: groq_instance)
+
+    result = provider.llm_complete([{"role": "user", "content": "hi"}])
+    assert result == "compound"
+    assert groq_instance.calls[-1]["model"] == "groq/compound"
+    assert groq_instance.calls[-1]["compound_custom"] == {
+        "tools": {"enabled_tools": ["web_search", "code_interpreter"]}
+    }
+
+
+def test_tools_path_uses_env_enabled_tools(monkeypatch):
+    _base_env(monkeypatch)
+    monkeypatch.setenv("ENABLE_LLM", "1")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    monkeypatch.setenv("GROQ_API_KEY", "groq")
+    monkeypatch.setenv("GROQ_SYSTEM", "groq/compound")
+    monkeypatch.setenv("GROQ_ENABLED_TOOLS", "[\"web_search\",\"calendar\"]")
+    get_settings.cache_clear()
 
     captured = {}
 
@@ -114,23 +163,24 @@ def test_groq_tools(monkeypatch):
             )
 
         def _create(self, **kwargs):
-            captured["kwargs"] = kwargs
+            captured.update(kwargs)
             return types.SimpleNamespace(
                 choices=[types.SimpleNamespace(message={"content": "tools"})]
             )
 
-    monkeypatch.setattr(provider, "OpenAI", StubOpenAI)
+    monkeypatch.setattr(provider, "OpenAI", None)
     monkeypatch.setattr(provider, "Groq", DummyGroq)
 
     result = provider.llm_complete(
         [{"role": "user", "content": "hi"}],
         use_tools=True,
-        enabled_tools=("calendar",),
     )
     assert result == "tools"
-    assert captured["kwargs"]["model"] == "groq/compound"
-    assert captured["kwargs"]["compound_custom"] == {"tools": {"enabled_tools": ["calendar"]}}
-    assert captured["kwargs"]["max_completion_tokens"] == 300
+    assert captured["model"] == "groq/compound"
+    assert captured["compound_custom"] == {
+        "tools": {"enabled_tools": ["web_search", "calendar"]}
+    }
+    assert captured["max_completion_tokens"] == 300
 
 
 def test_streaming(monkeypatch):
@@ -187,7 +237,6 @@ def test_chaos_retry(monkeypatch):
                 choices=[types.SimpleNamespace(message={"content": "ok"})]
             )
 
-    # First random() call triggers chaos, second allows success
     sequence = itertools.chain([0.0], itertools.repeat(1.0))
 
     monkeypatch.setattr(provider, "OpenAI", DummyOpenAI)
@@ -196,7 +245,6 @@ def test_chaos_retry(monkeypatch):
 
     result = provider.llm_complete([{"role": "user", "content": "hi"}])
     assert result == "ok"
-    # Chaos injection prevented the first attempt from reaching the client
     assert calls["attempts"] == 1
 
 

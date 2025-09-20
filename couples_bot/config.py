@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _safe_json_loads(raw: str):
+    """Parse JSON while tolerating plain-text fallbacks."""
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
 
 
 class Settings(BaseSettings):
@@ -23,6 +33,12 @@ class Settings(BaseSettings):
     openai_model: str = Field(default="o4-mini", alias="OPENAI_MODEL")
     groq_api_key: Optional[str] = Field(default=None, alias="GROQ_API_KEY")
     groq_model: str = Field(default="openai/gpt-oss-120b", alias="GROQ_MODEL")
+    groq_system: str = Field(default="", alias="GROQ_SYSTEM")
+    groq_enabled_tools: List[str] = Field(
+        default_factory=lambda: ["web_search", "code_interpreter"],
+        alias="GROQ_ENABLED_TOOLS",
+        json_loads=_safe_json_loads,
+    )
     groq_fallback_model: str = Field(
         default="llama-3.3-70b-versatile", alias="GROQ_FALLBACK_MODEL"
     )
@@ -58,17 +74,57 @@ class Settings(BaseSettings):
             "Asia/Kolkata",
         ],
         alias="ONBOARDING_TZ_SUGGESTIONS",
+        json_loads=_safe_json_loads,
     )
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        populate_by_name = True
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        populate_by_name=True,
+        json_loads=_safe_json_loads,
+        env_parse_json=False,
+    )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings,
+        env_settings,
+        dotenv_settings,
+        file_secret_settings,
+    ):
+        def _wrapped_env():
+            data = env_settings()
+            for key in ("GROQ_ENABLED_TOOLS", "ONBOARDING_TZ_SUGGESTIONS"):
+                value = data.get(key)
+                if isinstance(value, str):
+                    parsed = _safe_json_loads(value)
+                    if isinstance(parsed, str):
+                        parsed = [item.strip() for item in parsed.split(",") if item.strip()]
+                    data[key] = parsed
+            return data
+
+        return init_settings, _wrapped_env, dotenv_settings, file_secret_settings
 
     @field_validator("onboarding_tz_suggestions", mode="before")
     @classmethod
     def _parse_tz_suggestions(cls, value):
         if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("groq_enabled_tools", mode="before")
+    @classmethod
+    def _parse_enabled_tools(cls, value):
+        if isinstance(value, str):
+            if value.strip().startswith("["):
+                try:
+                    parsed = json.loads(value)
+                    if isinstance(parsed, list):
+                        return [str(item) for item in parsed]
+                except json.JSONDecodeError:  # pragma: no cover - best effort fallback
+                    pass
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
 

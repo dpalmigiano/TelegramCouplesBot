@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import random
 import time
-from typing import Iterable, Iterator, Sequence
+import uuid
+from typing import Callable, Iterable, Iterator, Sequence
 
 from ..config import get_settings
 
@@ -21,6 +23,7 @@ except Exception:  # pragma: no cover
 
 REQUEST_TIMEOUT = 30.0
 MAX_RETRIES = 3
+BREAKER_COOLDOWN = 30.0
 
 
 class LLMDisabled(RuntimeError):
@@ -28,6 +31,44 @@ class LLMDisabled(RuntimeError):
 
 
 Message = Sequence[dict]
+
+logger = logging.getLogger(__name__)
+
+
+class CircuitBreaker:
+    """Minimal circuit breaker tracking 5xx failures."""
+
+    def __init__(self, name: str, cooldown: float = BREAKER_COOLDOWN) -> None:
+        self.name = name
+        self.cooldown = cooldown
+        self._open_until = 0.0
+        self._failures = 0
+
+    def allow(self) -> bool:
+        return time.monotonic() >= self._open_until
+
+    def record_success(self) -> None:
+        self._failures = 0
+        self._open_until = 0.0
+
+    def record_failure(self, exc: Exception) -> None:
+        status_code = getattr(exc, "status_code", None)
+        try:
+            code_int = int(status_code) if status_code is not None else None
+        except Exception:  # pragma: no cover - defensive
+            code_int = None
+        if code_int is not None and 500 <= code_int < 600:
+            self._failures += 1
+            if self._failures >= 2:
+                self._open_until = time.monotonic() + self.cooldown
+                logger.warning(
+                    "llm_circuit_open name=%s failures=%s cooldown=%.1f", self.name, self._failures, self.cooldown
+                )
+        else:
+            self._failures = 0
+
+
+_BREAKERS: dict[str, CircuitBreaker] = {}
 
 
 def _streaming_iterator(chunks: Iterable) -> Iterator[str]:
@@ -48,14 +89,19 @@ def _maybe_inject_failure(provider_name: str) -> None:
         raise TimeoutError(f"CHAOS: simulated {provider_name} failure")
 
 
-def _with_retries(func):
+def _with_retries(func: Callable[[], object], *, provider_name: str, breaker: CircuitBreaker):
+    if not breaker.allow():
+        raise LLMDisabled(f"{provider_name} unavailable (circuit open)")
     delay = 1.0
     last_error: Exception | None = None
     for attempt in range(MAX_RETRIES):
         try:
-            return func()
+            result = func()
+            breaker.record_success()
+            return result
         except Exception as exc:  # pragma: no cover - network/provider failures
             last_error = exc
+            breaker.record_failure(exc)
             if attempt == MAX_RETRIES - 1:
                 raise
             time.sleep(delay + random.uniform(0, 0.3))
@@ -71,6 +117,8 @@ def _openai_complete(messages, *, max_tokens, temperature, stream):
         raise LLMDisabled("OpenAI unavailable")
 
     client = OpenAI(api_key=settings.openai_api_key, timeout=REQUEST_TIMEOUT)
+    breaker = _BREAKERS.setdefault("openai", CircuitBreaker("openai"))
+    request_id = f"oa-{uuid.uuid4().hex}"
 
     def _invoke():
         _maybe_inject_failure("openai")
@@ -80,9 +128,10 @@ def _openai_complete(messages, *, max_tokens, temperature, stream):
             temperature=temperature,
             max_tokens=max_tokens,
             stream=stream,
+            extra_headers={"x-client-request-id": request_id},
         )
 
-    response = _with_retries(_invoke)
+    response = _with_retries(_invoke, provider_name="openai", breaker=breaker)
     if stream:
         return _streaming_iterator(response)
     return response.choices[0].message.get("content", "")
@@ -102,24 +151,56 @@ def _groq_complete(
         raise LLMDisabled("Groq unavailable")
 
     client = Groq(api_key=settings.groq_api_key, timeout=REQUEST_TIMEOUT)
-    model = settings.groq_model
-    extra: dict[str, object] = {}
-    if use_tools:
-        model = "groq/compound"
-        extra["compound_custom"] = {"tools": {"enabled_tools": list(enabled_tools)}}
+    chat_model = settings.groq_model or "openai/gpt-oss-120b"
+    compound_model = settings.groq_system or ""
+    tools_list = list(enabled_tools) if enabled_tools else list(settings.groq_enabled_tools)
 
-    def _invoke():
-        _maybe_inject_failure("groq")
-        return client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            max_completion_tokens=max_tokens,
-            stream=stream,
-            **extra,
+    def _invoke(model: str, *, breaker_name: str, extra: dict[str, object]) -> object:
+        breaker = _BREAKERS.setdefault(breaker_name, CircuitBreaker(breaker_name))
+        request_id = f"{breaker_name}-{uuid.uuid4().hex}"
+
+        def _call():
+            _maybe_inject_failure(breaker_name)
+            payload = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "top_p": 1,
+                "max_completion_tokens": max_tokens,
+                "stream": stream,
+                "extra_headers": {"x-client-request-id": request_id},
+            }
+            payload.update(extra)
+            return client.chat.completions.create(**payload)
+
+        return _with_retries(_call, provider_name=breaker_name, breaker=breaker)
+
+    def _chat_call() -> object:
+        return _invoke(chat_model, breaker_name="groq-chat", extra={})
+
+    def _compound_call() -> object:
+        if not compound_model:
+            raise LLMDisabled("Groq compound disabled")
+        return _invoke(
+            compound_model,
+            breaker_name="groq-compound",
+            extra={"compound_custom": {"tools": {"enabled_tools": tools_list}}},
         )
 
-    response = _with_retries(_invoke)
+    if use_tools:
+        try:
+            response = _compound_call()
+        except LLMDisabled:
+            response = _chat_call()
+    else:
+        try:
+            response = _chat_call()
+        except Exception as exc:
+            if not compound_model:
+                raise
+            logger.warning("groq_chat_failed fallback=compound reason=%s", exc)
+            response = _compound_call()
+
     if stream:
         return _streaming_iterator(response)
     return response.choices[0].message.get("content", "")

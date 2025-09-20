@@ -34,38 +34,70 @@ def _maybe_fail_once() -> None:
     raise RuntimeError("CHAOS: simulated queue failure")
 
 
-def enqueue_job(couple_id: int, payload_json: str, payload_hash: str) -> Optional[int]:
-    """Insert a pending job if no duplicate hash exists."""
+def enqueue_job(
+    *,
+    couple_id: int,
+    chat_id: int,
+    payload_json: str,
+    payload_hash: str,
+    job_kind: str,
+    priority: str,
+    window_start_ts: Optional[int],
+    window_end_ts: Optional[int],
+    retry_after_ts: Optional[int] = None,
+) -> Optional[int]:
+    """Insert a pending job keyed by window metadata if it does not yet exist."""
 
+    created_ts = _utc_timestamp()
     with db.get_conn() as conn:
         try:
             conn.execute(
                 """
-                INSERT INTO jobs(couple_id, payload_json, payload_hash, created_ts, status)
-                VALUES(?,?,?,?,?)
+                INSERT INTO jobs(
+                    couple_id,
+                    chat_id,
+                    job_kind,
+                    priority,
+                    payload_json,
+                    payload_hash,
+                    window_start_ts,
+                    window_end_ts,
+                    retry_after_ts,
+                    created_ts,
+                    status
+                )
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     couple_id,
+                    chat_id,
+                    job_kind,
+                    priority,
                     payload_json,
                     payload_hash,
-                    _utc_timestamp(),
+                    window_start_ts,
+                    window_end_ts,
+                    retry_after_ts,
+                    created_ts,
                     STATUS_PENDING,
                 ),
             )
         except sqlite3.IntegrityError:
             return None
         job_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
-        return int(job_id)
+    return int(job_id)
 
 
 def job_exists(couple_id: int, payload_hash: str) -> bool:
-    """Return True if a pending or running job with this hash already exists."""
+    """Return True if a matching pending or running job exists."""
 
     with db.get_conn() as conn:
         row = conn.execute(
             """
             SELECT 1 FROM jobs
-            WHERE couple_id = ? AND payload_hash = ? AND status IN (?, ?)
+            WHERE couple_id = ?
+              AND payload_hash = ?
+              AND status IN (?, ?)
             LIMIT 1
             """,
             (couple_id, payload_hash, STATUS_PENDING, STATUS_RUNNING),
@@ -86,11 +118,18 @@ def has_active_job(couple_id: int) -> bool:
     return bool(row)
 
 
-def pending_jobs_count() -> int:
+def pending_jobs_count(include_future: bool = False) -> int:
+    """Count pending jobs that are ready to run (respecting retry_after)."""
+
+    clause = "status = ?"
+    params: List[object] = [STATUS_PENDING]
+    if not include_future:
+        clause += " AND (retry_after_ts IS NULL OR retry_after_ts <= ?)"
+        params.append(_utc_timestamp())
     with db.get_conn() as conn:
         row = conn.execute(
-            "SELECT COUNT(1) AS cnt FROM jobs WHERE status = ?",
-            (STATUS_PENDING,),
+            f"SELECT COUNT(1) AS cnt FROM jobs WHERE {clause}",
+            params,
         ).fetchone()
     return int(row["cnt"]) if row else 0
 
@@ -101,26 +140,28 @@ def _fetch_job_by_id(job_id: int):
 
 
 def claim_job() -> Optional[Mapping[str, Any]]:
-    """Claim the oldest pending job and mark it as running."""
+    """Claim the highest-priority pending job and mark it as running."""
 
     _maybe_fail_once()
+    now_ts = _utc_timestamp()
     with db.get_conn() as conn:
         row = conn.execute(
             """
             SELECT * FROM jobs
             WHERE status = ?
-            ORDER BY created_ts ASC
+              AND (retry_after_ts IS NULL OR retry_after_ts <= ?)
+            ORDER BY CASE priority WHEN 'high' THEN 0 ELSE 1 END,
+                     created_ts ASC
             LIMIT 1
             """,
-            (STATUS_PENDING,),
+            (STATUS_PENDING, now_ts),
         ).fetchone()
         if not row:
             return None
-        now_ts = _utc_timestamp()
         cursor = conn.execute(
             """
             UPDATE jobs
-            SET status = ?, started_ts = ?
+            SET status = ?, started_ts = ?, retry_after_ts = NULL
             WHERE id = ? AND status = ?
             """,
             (STATUS_RUNNING, now_ts, row["id"], STATUS_PENDING),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import logging
 from typing import Optional
 
 from .. import db
@@ -12,6 +13,9 @@ from ..utils import timebox
 PING_COOLDOWN_MINUTES = 10
 RED_BACKOFF_MINUTES = 60
 RED_WINDOW_HOURS = 2
+PER_MINUTE_CAP = 3
+
+logger = logging.getLogger(__name__)
 
 
 def _combine_dnd(pref_row) -> Optional[str]:
@@ -55,6 +59,17 @@ async def maybe_ping(
         if timebox.within_cooldown(backoff_last, now, RED_BACKOFF_MINUTES):
             return False
 
+    minute_key = f"ping_minute:{user_id}:{timebox.minute_bucket(now)}"
+    sent_this_minute = int(db.get_stat(couple_id, minute_key, default=0))
+    if sent_this_minute >= PER_MINUTE_CAP:
+        logger.info(
+            "ping_deferred couple_id=%s user_id=%s metric=%s reason=per_minute queued=1",
+            couple_id,
+            user_id,
+            metric_key,
+        )
+        return False
+
     bucket = timebox.daily_bucket(now)
     cap_key = "max_neg_per_day" if kind == AlertKind.RISK else "max_pos_per_day"
     if kind == AlertKind.LOGISTICS:
@@ -66,10 +81,18 @@ async def maybe_ping(
         return False
 
     # Send the ping
+    logger.info(
+        "alert_ping couple_id=%s user_id=%s metric=%s kind=%s",
+        couple_id,
+        user_id,
+        metric_key,
+        kind.value,
+    )
     await client.send_message(user_id, text[:320])
 
     db.record_cooldown(couple_id, user_id, metric_key, now)
     db.upsert_stat(couple_id, stat_key, sent_today + 1)
+    db.upsert_stat(couple_id, minute_key, sent_this_minute + 1)
 
     if kind == AlertKind.RISK:
         start_key = f"red_window_start:{user_id}"

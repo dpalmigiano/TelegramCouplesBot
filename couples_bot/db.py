@@ -37,6 +37,21 @@ def get_conn() -> Iterator[sqlite3.Connection]:
         raise
 
 
+def _ensure_job_columns(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}
+    alters = {
+        "chat_id": "INTEGER",
+        "job_kind": "TEXT NOT NULL DEFAULT 'analysis'",
+        "priority": "TEXT NOT NULL DEFAULT 'normal'",
+        "window_start_ts": "INT",
+        "window_end_ts": "INT",
+        "retry_after_ts": "INT",
+    }
+    for name, ddl in alters.items():
+        if name not in columns:
+            conn.execute(f"ALTER TABLE jobs ADD COLUMN {name} {ddl}")
+
+
 def run_migrations() -> None:
     """Apply schema migrations from the packaged SQL file."""
 
@@ -44,6 +59,13 @@ def run_migrations() -> None:
     sql = schema_path.read_text(encoding="utf-8")
     with get_conn() as conn:
         conn.executescript(sql)
+        _ensure_job_columns(conn)
+        try:
+            conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS graph_node_fts USING fts5(node_id, content, tokenize='unicode61')"
+            )
+        except sqlite3.OperationalError:
+            pass
 
 
 def list_couples() -> List[sqlite3.Row]:

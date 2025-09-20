@@ -146,6 +146,10 @@ def register(client) -> None:
         window = event.raw_text.split(" ", 1)[1] if " " in event.raw_text else ""
         await event.respond(await commands.set_dnd(couple["id"], event.sender_id, window))
 
+    @client.on(events.NewMessage(pattern=r"^/privacy_help"))
+    async def _privacy_help(event):
+        await event.respond(await commands.privacy_help())
+
     @client.on(events.NewMessage(pattern=r"^/forget"))
     async def _forget(event):
         couple = _resolve_couple(event)

@@ -182,6 +182,9 @@ def process_job(job_row, client: Groq) -> None:
     docs = payload.get("docs", [])
     use_tools = bool(payload.get("use_tools"))
     enabled_tools = payload.get("enabled_tools", [])
+    job_kind = payload.get("job_kind", "analysis")
+    priority = payload.get("priority", "normal")
+    chat_id = int(payload.get("chat_id", 0))
 
     if not docs:
         complete_job(
@@ -195,7 +198,7 @@ def process_job(job_row, client: Groq) -> None:
         )
         return
 
-    queue_len = pending_jobs_count()
+    queue_len = pending_jobs_count(include_future=True)
     model, extra_args = _choose_model(use_tools, queue_len)
     if use_tools:
         extra_args["compound_custom"] = {"tools": {"enabled_tools": enabled_tools}}
@@ -203,11 +206,14 @@ def process_job(job_row, client: Groq) -> None:
     messages = _build_messages(docs)
     settings = get_settings()
     logger.info(
-        "Processing job %s for couple %s with model=%s queue=%s",
+        "reag_job_start job_id=%s couple_id=%s chat_id=%s model=%s queue_len=%s kind=%s priority=%s",
         job_id,
         couple_id,
+        chat_id,
         model,
         queue_len,
+        job_kind,
+        priority,
     )
     start_ts = min(int(doc.get("ts_int", int(timebox.utc_now().timestamp()))) for doc in docs)
     end_ts = max(int(doc.get("ts_int", start_ts)) for doc in docs)
@@ -230,7 +236,13 @@ def process_job(job_row, client: Groq) -> None:
     try:
         parsed = json.loads(content)
     except json.JSONDecodeError as exc:
-        logger.error("Job %s returned non-JSON: %s", job_id, content[:200])
+        logger.error(
+            "reag_job_schema_error job_id=%s couple_id=%s error=%s snippet=%s",
+            job_id,
+            couple_id,
+            "json_decode",
+            content[:200],
+        )
         fail_job(job_id, f"Invalid JSON response: {exc}")
         return
 
@@ -240,7 +252,12 @@ def process_job(job_row, client: Groq) -> None:
 
     validation_error = _validate_payload(parsed)
     if validation_error:
-        logger.error("Job %s failed schema validation: %s", job_id, validation_error)
+        logger.error(
+            "reag_job_schema_error job_id=%s couple_id=%s error=%s",
+            job_id,
+            couple_id,
+            validation_error,
+        )
         fail_job(job_id, validation_error)
         return
 
@@ -255,7 +272,7 @@ def process_job(job_row, client: Groq) -> None:
         if isinstance(advice, Mapping):
             apply_advice(advice, couple_id)
     except Exception as exc:  # pragma: no cover - defensive
-        logger.exception("Failed applying job %s", job_id)
+        logger.exception("reag_job_apply_failed job_id=%s couple_id=%s", job_id, couple_id)
         fail_job(job_id, f"apply_error: {exc}")
         return
 
@@ -271,8 +288,10 @@ def process_job(job_row, client: Groq) -> None:
     )
     duration = time.monotonic() - started_monotonic
     logger.info(
-        "Job %s done model=%s queue=%s tok_in=%s tok_out=%s duration=%.2fs",
+        "reag_job_done job_id=%s couple_id=%s chat_id=%s model=%s queue_len=%s tok_in=%s tok_out=%s duration=%.2f",
         job_id,
+        couple_id,
+        chat_id,
         model,
         queue_len,
         token_in,

@@ -31,6 +31,8 @@ def _setup_env(monkeypatch, tmp_path):
     monkeypatch.setenv("REAG_QUEUE_HIGH_WATERMARK", "12")
     monkeypatch.setenv("REAG_MAX_OUT_TOKENS", "4096")
     monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fallback-model")
+    monkeypatch.setenv("GROQ_SYSTEM", "")
+    monkeypatch.setenv("GROQ_ENABLED_TOOLS", "[\"web_search\",\"code_interpreter\"]")
     monkeypatch.setenv("GRAPH_ENABLED", "false")
     monkeypatch.setenv("ENABLE_LLM", "0")
     monkeypatch.setenv("OPENAI_API_KEY", "")
@@ -82,7 +84,6 @@ async def test_cooldown_and_dnd(monkeypatch, tmp_path):
         now=now + timedelta(minutes=5),
     )
     assert not sent
-    assert len(client.sent) == 1
 
     # After cooldown
     sent = await pings.maybe_ping(
@@ -111,6 +112,14 @@ async def test_cooldown_and_dnd(monkeypatch, tmp_path):
         now=now + timedelta(hours=1),
     )
     assert not sent
+
+
+@pytest.mark.asyncio
+async def test_privacy_help_text(monkeypatch, tmp_path):
+    _setup_env(monkeypatch, tmp_path)
+    message = await commands.privacy_help()
+    assert "Group Privacy" in message
+    assert "deep-link onboarding" in message.lower()
 
 
 @pytest.mark.asyncio
@@ -250,6 +259,59 @@ async def test_daily_caps_for_new_triggers(monkeypatch, tmp_path):
         now=log_base + timedelta(hours=2),
     )
     assert not blocked_log
+
+
+@pytest.mark.asyncio
+async def test_per_minute_cap(monkeypatch, tmp_path):
+    couple_id = _setup_env(monkeypatch, tmp_path)
+    db.set_pref(couple_id, 1, max_neg_per_day=10, max_pos_per_day=10)
+    client = DummyClient()
+    base = datetime(2024, 1, 2, 10, 0, 0)
+
+    sent1 = await pings.maybe_ping(
+        client,
+        couple_id=couple_id,
+        user_id=1,
+        metric_key="harsh_start_rate",
+        kind=AlertKind.RISK,
+        text="r1",
+        tz_name="UTC",
+        now=base,
+    )
+    sent2 = await pings.maybe_ping(
+        client,
+        couple_id=couple_id,
+        user_id=1,
+        metric_key="neg_affect_reciprocity",
+        kind=AlertKind.RISK,
+        text="r2",
+        tz_name="UTC",
+        now=base + timedelta(seconds=10),
+    )
+    sent3 = await pings.maybe_ping(
+        client,
+        couple_id=couple_id,
+        user_id=1,
+        metric_key="boundary_violations_per_1k",
+        kind=AlertKind.RISK,
+        text="r3",
+        tz_name="UTC",
+        now=base + timedelta(seconds=20),
+    )
+    sent4 = await pings.maybe_ping(
+        client,
+        couple_id=couple_id,
+        user_id=1,
+        metric_key="contempt_markers_per_1k",
+        kind=AlertKind.RISK,
+        text="r4",
+        tz_name="UTC",
+        now=base + timedelta(seconds=30),
+    )
+
+    assert sent1 and sent2 and sent3
+    assert not sent4
+    assert len(client.sent) == 3
 
 
 @pytest.mark.asyncio

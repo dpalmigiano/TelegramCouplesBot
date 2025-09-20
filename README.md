@@ -46,8 +46,10 @@ Partners can tap the link to jump into the flow: the bot confirms the group,
 walks both partners through consent, timezone selection, DND/SLA presets, and
 finishes with a success card. If Telegram privacy mode is still enabled, the
 wizard surfaces a step-by-step guide (BotFather → `/setprivacy` → turn **off**)
-so the bot can read group messages. The classic `/link @A @B` command remains
-available for manual setups, and `/hello` offers a quick welcome recap.
+so the bot can read group messages. Operators can DM `/privacy_help` for the
+same checklist and ready-to-share instructions. The classic `/link @A @B`
+command remains available for manual setups, and `/hello` offers a quick
+welcome recap.
 
 ## Environment variables
 
@@ -59,6 +61,8 @@ available for manual setups, and `/hello` offers a quick welcome recap.
 | `ENABLE_LLM` | `1` to enable LLM features; `0` for rule-based advice only. |
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | Primary provider (default `o4-mini`). |
 | `GROQ_API_KEY` / `GROQ_MODEL` | Groq fallback for plain chat (default `openai/gpt-oss-120b`). |
+| `GROQ_SYSTEM` | Optional Groq compound model (`groq/compound` or `groq/compound-mini`) for REAG analysis lanes. |
+| `GROQ_ENABLED_TOOLS` | Comma-separated tools passed to compound calls (default `web_search,code_interpreter`). |
 | `GROQ_FALLBACK_MODEL` | Model used when the REAG queue is under backpressure (default `llama-3.3-70b-versatile`). |
 | `DEFAULT_TZ` | Olson timezone name for couples without explicit tz. |
 | `LOG_LEVEL` | Python logging level (e.g. `INFO`). |
@@ -73,7 +77,7 @@ available for manual setups, and `/hello` offers a quick welcome recap.
 | `ONBOARDING_DEEP_LINKS` | `1` to enable deep-link wizard (default on). |
 | `ONBOARDING_BRAND_NAME` | Display name used in onboarding cards (default `Couples Coach`). |
 | `ONBOARDING_EMOJI_STYLE` | Emoji string for progress bars (default `🎯💬❤️`). |
-| `ONBOARDING_TZ_SUGGESTIONS` | Comma-separated timezone presets for onboarding. |
+| `ONBOARDING_TZ_SUGGESTIONS` | JSON array of timezone presets for onboarding (e.g., `["America/Los_Angeles","Europe/London"]`). |
 
 ## Linking a couple
 
@@ -121,10 +125,12 @@ values, and refreshed advice blocks. If the queue length crosses
 
 Advice blocks per partner refresh every ~10 minutes or after 50 messages. By
 default the bot calls OpenAI `o4-mini`. If OpenAI is unavailable, it falls back
-to Groq `openai/gpt-oss-120b`. When a caller requests tool use, the provider
-switches to `groq/compound` and enables the requested tools via the
-`compound_custom.tools.enabled_tools` payload. With both providers disabled, the
-advice engine falls back to a rule-based summary derived from metric deltas.
+to Groq `openai/gpt-oss-120b` (capped at 4096 `max_completion_tokens`). When a
+caller requests tool use—and `GROQ_SYSTEM` is set to `groq/compound` or
+`groq/compound-mini`—the provider switches to the compound model and enables the
+configured tool set (`GROQ_ENABLED_TOOLS`, default `web_search,code_interpreter`).
+With both providers disabled, the advice engine falls back to a rule-based
+summary derived from metric deltas.
 
 ## Development
 

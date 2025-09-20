@@ -67,8 +67,14 @@ CREATE TABLE IF NOT EXISTS prefs (
 CREATE TABLE IF NOT EXISTS jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     couple_id INTEGER NOT NULL REFERENCES couples(id) ON DELETE CASCADE,
+    chat_id INTEGER,
+    job_kind TEXT NOT NULL DEFAULT 'analysis',
+    priority TEXT NOT NULL DEFAULT 'normal',
     payload_json TEXT NOT NULL,
     payload_hash TEXT NOT NULL,
+    window_start_ts INT,
+    window_end_ts INT,
+    retry_after_ts INT,
     created_ts INT NOT NULL,
     started_ts INT,
     finished_ts INT,
@@ -78,6 +84,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     error TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_hash ON jobs(couple_id, payload_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_window ON jobs(chat_id, window_start_ts, window_end_ts, job_kind);
 CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs(status, created_ts);
 
 CREATE TABLE IF NOT EXISTS reag_runs (
@@ -91,3 +98,23 @@ CREATE TABLE IF NOT EXISTS reag_runs (
     created_ts INT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_reag_runs_couple ON reag_runs(couple_id, created_ts DESC);
+
+CREATE TABLE IF NOT EXISTS graph_nodes (
+    id TEXT PRIMARY KEY,
+    couple_id INTEGER NOT NULL REFERENCES couples(id) ON DELETE CASCADE,
+    type TEXT NOT NULL,
+    label TEXT,
+    ts INT,
+    tags TEXT,
+    content TEXT
+);
+
+CREATE TABLE IF NOT EXISTS graph_edges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    couple_id INTEGER NOT NULL REFERENCES couples(id) ON DELETE CASCADE,
+    src TEXT NOT NULL,
+    dst TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    created_ts INT NOT NULL,
+    UNIQUE(couple_id, src, dst, kind)
+);

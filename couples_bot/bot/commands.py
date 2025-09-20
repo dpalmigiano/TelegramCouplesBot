@@ -6,6 +6,7 @@ import math
 from typing import Dict, List, Optional
 
 from .. import db
+from ..config import get_settings
 from ..advice import advice_engine
 from ..llm import prompts, provider
 from ..metrics import compute, thresholds
@@ -291,6 +292,17 @@ async def forget(couple_id: int, user_id: int) -> str:
     set_consent(couple_id, user_id, False)
     db.set_pref(couple_id, user_id, enable_alerts=False)
     return "Your data has been marked for deletion."
+
+
+async def privacy_help() -> str:
+    settings = get_settings()
+    return (
+        "To let the bot observe group messages, turn off BotFather privacy mode or make the bot an admin.\n"
+        "• In BotFather: /mybots → Select bot → Bot Settings → Group Privacy → Disable.\n"
+        "• Or promote the bot inside Telegram with Read Messages permission.\n"
+        "Deep-link onboarding: https://t.me/<bot_username>?start=link_<group>_<partnerA>_<partnerB>.\n"
+        f"Need a reminder? {settings.onboarding_brand_name} can resend invites with /link in the group."
+    )
 
 
 async def list_couples() -> str:

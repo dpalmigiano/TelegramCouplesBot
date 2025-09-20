@@ -24,6 +24,8 @@ def _env(monkeypatch, tmp_path):
     monkeypatch.setenv("REAG_QUEUE_HIGH_WATERMARK", "5")
     monkeypatch.setenv("REAG_MAX_OUT_TOKENS", "4096")
     monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fallback-model")
+    monkeypatch.setenv("GROQ_SYSTEM", "")
+    monkeypatch.setenv("GROQ_ENABLED_TOOLS", "[\"web_search\",\"code_interpreter\"]")
     monkeypatch.setenv("GRAPH_ENABLED", "false")
     monkeypatch.setenv("ENABLE_LLM", "1")
     monkeypatch.setenv("OPENAI_API_KEY", "")
@@ -55,10 +57,13 @@ def _make_payload(couple_id: int):
     }
     payload = {
         "couple_id": couple_id,
+        "chat_id": 111,
         "docs": [doc],
         "use_tools": False,
         "enabled_tools": [],
         "created_ts": int(now.timestamp()),
+        "job_kind": "sync",
+        "priority": "normal",
     }
     return payload
 
@@ -85,7 +90,17 @@ def test_process_valid_job(monkeypatch, tmp_path):
     payload = _make_payload(couple_id)
     payload_json = json.dumps(payload, separators=(",", ":"))
     payload_hash = hash_payload(payload)
-    job_id = enqueue_job(couple_id, payload_json, payload_hash)
+    doc_ts = payload["docs"][0]["ts_int"]
+    job_id = enqueue_job(
+        couple_id=couple_id,
+        chat_id=111,
+        payload_json=payload_json,
+        payload_hash=payload_hash,
+        job_kind=payload["job_kind"],
+        priority=payload["priority"],
+        window_start_ts=doc_ts,
+        window_end_ts=doc_ts,
+    )
     assert job_id is not None
 
     job_row = claim_job()
@@ -143,7 +158,17 @@ def test_non_json_failure(monkeypatch, tmp_path):
     payload = _make_payload(couple_id)
     payload_json = json.dumps(payload, separators=(",", ":"))
     payload_hash = hash_payload(payload)
-    job_id = enqueue_job(couple_id, payload_json, payload_hash)
+    doc_ts = payload["docs"][0]["ts_int"]
+    job_id = enqueue_job(
+        couple_id=couple_id,
+        chat_id=111,
+        payload_json=payload_json,
+        payload_hash=payload_hash,
+        job_kind=payload["job_kind"],
+        priority=payload["priority"],
+        window_start_ts=doc_ts,
+        window_end_ts=doc_ts,
+    )
     assert job_id is not None
 
     job_row = claim_job()
@@ -159,14 +184,56 @@ def test_non_json_failure(monkeypatch, tmp_path):
     assert status == "FAILED"
 
 
+def test_claim_is_singleton(monkeypatch, tmp_path):
+    couple_id = _env(monkeypatch, tmp_path)
+    payload = _make_payload(couple_id)
+    payload_json = json.dumps(payload, separators=(",", ":"))
+    payload_hash = hash_payload(payload)
+    doc_ts = payload["docs"][0]["ts_int"]
+    job_id = enqueue_job(
+        couple_id=couple_id,
+        chat_id=111,
+        payload_json=payload_json,
+        payload_hash=payload_hash,
+        job_kind=payload["job_kind"],
+        priority=payload["priority"],
+        window_start_ts=doc_ts,
+        window_end_ts=doc_ts,
+    )
+    assert job_id is not None
+    first = claim_job()
+    assert first is not None
+    second = claim_job()
+    assert second is None
+
+
 def test_duplicate_payload_hash(monkeypatch, tmp_path):
     couple_id = _env(monkeypatch, tmp_path)
     payload = _make_payload(couple_id)
     payload_json = json.dumps(payload, separators=(",", ":"))
     payload_hash = hash_payload(payload)
-    first = enqueue_job(couple_id, payload_json, payload_hash)
+    doc_ts = payload["docs"][0]["ts_int"]
+    first = enqueue_job(
+        couple_id=couple_id,
+        chat_id=111,
+        payload_json=payload_json,
+        payload_hash=payload_hash,
+        job_kind=payload["job_kind"],
+        priority=payload["priority"],
+        window_start_ts=doc_ts,
+        window_end_ts=doc_ts,
+    )
     assert first is not None
-    second = enqueue_job(couple_id, payload_json, payload_hash)
+    second = enqueue_job(
+        couple_id=couple_id,
+        chat_id=111,
+        payload_json=payload_json,
+        payload_hash=payload_hash,
+        job_kind=payload["job_kind"],
+        priority=payload["priority"],
+        window_start_ts=doc_ts,
+        window_end_ts=doc_ts,
+    )
     assert second is None
 
 
@@ -175,14 +242,24 @@ def test_backpressure_routes_fallback(monkeypatch, tmp_path):
     payload = _make_payload(couple_id)
     payload_json = json.dumps(payload, separators=(",", ":"))
     payload_hash = hash_payload(payload)
-    job_id = enqueue_job(couple_id, payload_json, payload_hash)
+    doc_ts = payload["docs"][0]["ts_int"]
+    job_id = enqueue_job(
+        couple_id=couple_id,
+        chat_id=111,
+        payload_json=payload_json,
+        payload_hash=payload_hash,
+        job_kind=payload["job_kind"],
+        priority=payload["priority"],
+        window_start_ts=doc_ts,
+        window_end_ts=doc_ts,
+    )
     assert job_id is not None
     job_row = claim_job()
     assert job_row is not None
 
     capture = {}
 
-    def fake_pending():
+    def fake_pending(include_future: bool = False):
         return 10
 
     monkeypatch.setattr(reag_worker, "pending_jobs_count", fake_pending)

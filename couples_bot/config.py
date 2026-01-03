@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     database_path: Path = Field(default=Path("couples.sqlite"), alias="DATABASE_PATH")
 
+    influx_url: str = Field(default="http://localhost:8086", alias="INFLUX_URL")
+    influx_org: str = Field(default="checkins", alias="INFLUX_ORG")
+    influx_bucket: str = Field(default="checkins", alias="INFLUX_BUCKET")
+    payload_keyring: str = Field(default="", alias="PAYLOAD_KEYRING")
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

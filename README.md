@@ -1,98 +1,115 @@
-# Couples Coach Telethon Bot
+# Encrypted check-in telemetry bot
 
-This repository ships a metric-first MVP for a Telegram couples coach. It wires a
-Telethon bot, SQLite storage, metrics heuristics, and automated advice so you
-can run a supportive companion for a shared couple chat and each partner's DM.
+This repository now ships a privacy-first telemetry layer for 10-question
+wellness check-ins. The bot is responsible for assembling two InfluxDB-friendly
+measurements per check-in:
+
+1. **`checkin_meta` (plaintext)** – adherence + scheduling signals only
+2. **`checkin_payload` (encrypted)** – the actual answers, including per-answer
+   timestamps and entry method
+
+The goal is maximum signal without leaking symptoms if the database is stolen:
+Influx holds only low-cardinality tags and ciphertext; the bot decrypts on
+export.
 
 ## Quick start
 
-1. Create a Telegram bot with [@BotFather](https://t.me/BotFather) and disable
-   privacy mode so the bot can read group messages.
-2. Copy `.env.example` to `.env` and fill in the required values.
-3. Bootstrap the database:
+1. Copy `.env.example` to `.env` and provide keyring + Influx details.
+2. Install dependencies: `make setup`
+3. Run tests: `make test`
 
-   ```bash
-   make setup
-   make seed
-   ```
-
-4. Start the bot:
-
-   ```bash
-   make run
-   ```
-
-The entry point (`python -m couples_bot.app`) connects to Telegram, runs
-migrations, and prints a mini guide. The bot listens to a shared group and the
-partners' DMs.
+The Telethon scaffold remains available, but the default entry point focuses on
+generating check-in measurement payloads for ingestion.
 
 ## Environment variables
 
 | Key | Description |
 | --- | ----------- |
-| `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` | Telegram API credentials from https://my.telegram.org. |
-| `TELEGRAM_BOT_TOKEN` | Token from BotFather. |
-| `BOT_OWNER_USER_ID` | Telegram user id for admin commands. |
+| `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` | Telegram API credentials (kept for compatibility). |
+| `TELEGRAM_BOT_TOKEN` | Token from BotFather (kept for compatibility). |
+| `BOT_OWNER_USER_ID` | Telegram user id for admin commands (kept for compatibility). |
 | `ENABLE_LLM` | `1` to enable LLM features; `0` for rule-based advice only. |
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | Defaults to `o4-mini`. |
 | `GROQ_API_KEY` / `GROQ_MODEL` | Groq fallback (default `openai/gpt-oss-120b`). |
-| `DEFAULT_TZ` | Olson timezone name for couples without explicit tz. |
+| `DEFAULT_TZ` | Olson timezone name for check-ins without explicit tz. |
 | `LOG_LEVEL` | Python logging level (e.g. `INFO`). |
-| `DATABASE_PATH` | SQLite path (default `couples.sqlite`). |
+| `PAYLOAD_KEYRING` | Comma-separated `kid:base64key` entries for AES-GCM (e.g. `2:...==,1:...==`). |
+| `INFLUX_URL` / `INFLUX_ORG` / `INFLUX_BUCKET` | Connection settings for the time-series DB. |
+| `DATABASE_PATH` | SQLite path (legacy; unused by check-in storage). |
 
-## Linking a couple
+## Schema design
 
-1. Add the bot to the couple's shared group chat.
-2. In the group chat, run `/link @partnerA @partnerB`.
-3. Each partner must DM the bot `/consent yes`. The bot only starts tracking
-   once both have opted in.
-4. Partners can DM `/status` or `/advice` to view metrics or refresh advice.
+Both measurements share `_time = scheduled_at_utc` and the same low-cardinality
+tags: `user`, `slot`, `set`, `type`, `schema_v`, and optional `tz`.
 
-### Consent & privacy controls
+### `checkin_meta` (plaintext fields)
 
-- `/forget` wipes a partner's personal data and revokes consent.
-- `/pause` stops tracking without unlinking the couple.
-- `/resume` restarts tracking.
-- `/export` dumps recent logs.
+- `status_code` – `0=scheduled`, `1=done`, `2=skipped`, `3=missed`, `4=late_partial`
+- `answered_at_utc` – when the check-in finished (if answered)
+- `latency_sec` – seconds between scheduled and answered
+- `completion_pct` – answered / 10
+- `missing_count` – unanswered items
+- `nudge_count` – nudges sent
+- `muted_during_window` – `0/1`
 
-## Metrics and alerts
+### `checkin_payload` (encrypted fields)
 
-The pipeline logs every message, labels it with lexicon-based heuristics, and
-computes 18 relationship metrics. Eight are fully implemented in the MVP and
-the remainder return placeholder zeros with TODO notes.
+- `payload_ciphertext` – AES-GCM ciphertext of the payload JSON
+- `payload_kid` – key id for rotation
+- `payload_len` – ciphertext length for sanity/debug
 
-Instant DMs fire when thresholds cross:
+### Payload JSON
 
-- **Green (praise)**: repair successes, turning toward bids, positive conflict
-  ratio.
-- **Red (risk)**: harsh starts, contempt flags, boundary issues.
-- **Blue (logistics)**: SLA misses, plan slips.
+The encrypted payload is a wide JSON blob containing per-question timestamps,
+entry method, and optional controlled tags:
 
-Cooldowns, partner Do-Not-Disturb windows, and daily caps prevent spam.
+```json
+{
+  "schema_v": 1,
+  "checkin_id": "a1b2c3d4e5",
+  "scheduled_at_utc": "2026-01-03T18:00:00Z",
+  "started_at_utc": "2026-01-03T18:02:10Z",
+  "finished_at_utc": "2026-01-03T18:03:05Z",
+  "slot": "10:00",
+  "set": "FULL",
+  "type": "scheduled",
+  "answers": {
+    "q1": {"v": 7, "t": "2026-01-03T18:02:15Z", "m": "button"},
+    "q2": {"v": 4, "t": "2026-01-03T18:02:20Z", "m": "button"},
+    "q3": {"v": -1, "t": "2026-01-03T18:02:25Z", "m": "button"},
+    "q4": {"v": 6, "t": "2026-01-03T18:02:30Z", "m": "button"},
+    "q5": {"v": 3, "t": "2026-01-03T18:02:35Z", "m": "button"},
+    "q6": {"v": 6.5, "t": "2026-01-03T18:02:45Z", "m": "custom"},
+    "q7": {"v": 2, "t": "2026-01-03T18:02:50Z", "m": "button"},
+    "q8": {"v": 0, "t": "2026-01-03T18:02:55Z", "m": "button"},
+    "q9": {"v": 1, "t": "2026-01-03T18:03:00Z", "m": "button"},
+    "q10": {
+      "caffeine_mg": {"v": 95, "t": "2026-01-03T18:03:02Z", "m": "button"},
+      "baclofen_hours": {"v": 2.0, "t": "2026-01-03T18:03:05Z", "m": "button"}
+    }
+  },
+  "tags": ["after-meal"]
+}
+```
 
-## Advice generation
+## Data-quality rules
 
-Advice blocks per partner refresh every ~10 minutes or after 50 messages. By
-default the bot calls OpenAI `o4-mini`. If OpenAI is unavailable, it falls back
-to Groq `openai/gpt-oss-120b`. When a caller requests tool use, the provider
-switches to `groq/compound` and enables the requested tools via the
-`compound_custom.tools.enabled_tools` payload.
+- Always write `checkin_meta` at the scheduled timestamp (even if unanswered).
+- Clamp/validate ranges: q1/2/4/5 → 0–10, q3 → –5..+5, q6 → 0–24, q7 → 1–5,
+  q8/9 → 0/1, q10 caffeine → 0–600, q10 baclofen → 0–24. Skipped items remain
+  `null` in the payload.
+- Late threshold is 45 minutes; partial answers after that are labeled
+  `late_partial`.
 
-To force Groq usage (or configure tools), set `ENABLE_LLM=1`, provide a
-`GROQ_API_KEY`, and (optionally) set `OPENAI_API_KEY` blank so the fallback is
-used.
+## Export commands
 
-If both providers are disabled, the advice engine automatically falls back to a
-rule-based summary derived from metric deltas.
+- `/export 30` → decrypt last 30 days → CSV with columns per question + times
+- `/export_all` → full export
+- `/export_weekly_summary` (optional) → stats/graphs computed in the bot
 
 ## Development
 
-- `make setup` – install dependencies.
-- `make seed` – apply migrations and seed default thresholds.
-- `make run` – start the bot.
-- `make test` – run the pytest suite.
-- `make fmt` – placeholder formatting target.
-
-Tests ship with synthetic sample data to validate the metrics, alert cooldowns,
-and LLM provider fallback.
+- `make setup` – install dependencies
+- `make test` – run the pytest suite
+- `make fmt` – placeholder formatting target
 

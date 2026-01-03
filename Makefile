@@ -1,16 +1,16 @@
 .PHONY: setup run test seed fmt
 
 setup:
-pip install -r requirements.txt
+	pip install -r requirements.txt
 
 run:
-python -m couples_bot.app
+	python -m couples_bot.app
 
 test:
-pytest
+	pytest
 
 seed:
-python scripts/bootstrap_db.py && python scripts/seed_thresholds.py
+	python scripts/bootstrap_db.py && python scripts/seed_thresholds.py
 
 fmt:
-@echo "no-op"
+	@echo "no-op"
